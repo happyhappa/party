@@ -90,8 +90,34 @@ func TestParseMessageMissingTo(t *testing.T) {
 
 func TestParseMessageMissingSeparator(t *testing.T) {
 	msg := "TO: oc\nbody"
-	_, err := ParseMessage([]byte(msg))
-	if !errors.Is(err, errMissingSeparator) {
-		t.Fatalf("expected missing separator error, got %v", err)
+	env, err := ParseMessage([]byte(msg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if env == nil {
+		t.Fatal("expected envelope")
+	}
+	if env.To != "oc" {
+		t.Fatalf("expected To oc, got %q", env.To)
+	}
+	if env.Payload != "body" {
+		t.Fatalf("expected payload body, got %q", env.Payload)
+	}
+}
+
+func TestParseMessageLeadingBlankLines(t *testing.T) {
+	msg := "\n\nTO: oc\n---\nhello"
+	env, err := ParseMessage([]byte(msg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if env == nil {
+		t.Fatal("expected envelope")
+	}
+	if env.To != "oc" {
+		t.Fatalf("expected To oc, got %q", env.To)
+	}
+	if env.Payload != "hello" {
+		t.Fatalf("expected payload hello, got %q", env.Payload)
 	}
 }

@@ -18,7 +18,6 @@ type Defaults struct {
 	ProjectID string
 }
 
-var errMissingSeparator = errors.New("rmf: missing header separator")
 var errMissingTo = errors.New("rmf: missing TO header")
 
 // ParseMessage parses an RMF v2 message into an Envelope.
@@ -33,6 +32,12 @@ func ParseMessageWithDefaults(message []byte, defaults Defaults) (*envelope.Enve
 	}
 
 	lines := strings.Split(strings.ReplaceAll(string(message), "\r\n", "\n"), "\n")
+	for len(lines) > 0 && strings.TrimSpace(lines[0]) == "" {
+		lines = lines[1:]
+	}
+	if len(lines) == 0 {
+		return nil, nil
+	}
 	separator := -1
 	for i, line := range lines {
 		if strings.TrimSpace(line) == "---" {
@@ -40,14 +45,35 @@ func ParseMessageWithDefaults(message []byte, defaults Defaults) (*envelope.Enve
 			break
 		}
 	}
-	if separator == -1 {
-		return nil, errMissingSeparator
-	}
 
-	headers := lines[:separator]
-	bodyLines := []string{}
-	if separator+1 < len(lines) {
-		bodyLines = lines[separator+1:]
+	var headers []string
+	var bodyLines []string
+	if separator >= 0 {
+		headers = lines[:separator]
+		if separator+1 < len(lines) {
+			bodyLines = lines[separator+1:]
+		}
+	} else {
+		blankIndex := -1
+		for i, line := range lines {
+			if strings.TrimSpace(line) == "" {
+				blankIndex = i
+				break
+			}
+		}
+		if blankIndex >= 0 {
+			headers = lines[:blankIndex]
+			if blankIndex+1 < len(lines) {
+				bodyLines = lines[blankIndex+1:]
+			}
+		} else if strings.Contains(lines[0], ":") {
+			headers = lines[:1]
+			if len(lines) > 1 {
+				bodyLines = lines[1:]
+			}
+		} else {
+			bodyLines = lines
+		}
 	}
 	body := strings.Join(bodyLines, "\n")
 
