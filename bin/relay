@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# relay CLI wrapper
+# relay CLI wrapper - RMF v2 format
 # Usage: relay send <oc|cc|cx|all> "message"
 
 cmd="${1:-}"
@@ -21,7 +21,7 @@ if [[ -z "$to" ]]; then
 fi
 
 case "$to" in
-  oc|cc|cx|all) ;;  # vog is sender-only, not a recipient
+  oc|cc|cx|all) ;;
   *)
     echo "Invalid recipient: $to (use oc|cc|cx|all)" >&2
     exit 2
@@ -35,12 +35,21 @@ fi
 
 msg="$*"
 
-outbox_dir="/mnt/llm-share/relay/outbox"
+# Determine sender from AGENT_ROLE env var (default: oc)
+from="${AGENT_ROLE:-oc}"
+
+# Outbox directory structure: outbox/<from>/
+outbox_dir="/mnt/llm-share/relay/outbox/${from}"
 mkdir -p "$outbox_dir"
 
-# JSON escape
-payload=$(printf '%s' "$msg" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\r//g' -e ':a;N;$!ba;s/\n/\\n/g')
+# Generate filename: <timestamp>-<rand>.msg
+timestamp=$(date +%Y%m%d_%H%M%S)
+rand=$(head -c 4 /dev/urandom | xxd -p)
+filename="${timestamp}-${rand}.msg"
 
-from="${RELAY_FROM:-oc}"
-
-printf '{"to":"%s","kind":"chat","payload":"%s"}\n' "$to" "$payload" >> "$outbox_dir/${from}.jsonl"
+# Write RMF v2 format: TO header, separator, body
+cat > "${outbox_dir}/${filename}" << EOF
+TO: ${to}
+---
+${msg}
+EOF

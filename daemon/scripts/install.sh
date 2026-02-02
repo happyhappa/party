@@ -47,7 +47,7 @@ echo ""
 
 # 1. Create directory structure
 info "Creating directory structure..."
-mkdir -p "$LLM_SHARE"/{relay/{outbox,processed,log,state/locks},attacks,recovery,reviews,shared/{runbooks,docs}}
+mkdir -p "$LLM_SHARE"/{relay/{outbox/{oc,cc,cx},processed,log,state/locks},attacks,recovery,reviews,shared/{runbooks,docs}}
 mkdir -p "$BIN_DIR"
 
 # Initialize state files if missing
