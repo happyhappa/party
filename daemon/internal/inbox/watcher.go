@@ -178,9 +178,11 @@ func (w *Watcher) readNew(path string) error {
 		log.Printf("outbox parse error %s: %v (skipping)", path, err)
 		return nil
 	}
+	sent := false
 	if env != nil {
 		select {
 		case w.events <- env:
+			sent = true
 		default:
 			log.Printf("outbox event dropped (channel full): %s -> %s", env.From, env.To)
 		}
@@ -190,8 +192,10 @@ func (w *Watcher) readNew(path string) error {
 	w.offsets[path] = info.Size()
 	w.mu.Unlock()
 
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
+	if sent {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 
 	return nil
