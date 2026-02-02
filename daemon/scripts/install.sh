@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+#
+# install.sh - Install LLM Relay Daemon and supporting scripts
+#
+# Usage: ./install.sh [--no-commands] [--no-systemd]
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Configuration
+LLM_SHARE="$HOME/llm-share"
+CLAUDE_COMMANDS="$HOME/.claude/commands"
+BIN_DIR="$HOME/.local/bin"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log() { echo -e "${GREEN}[install]${NC} $1"; }
+warn() { echo -e "${YELLOW}[install]${NC} $1"; }
+err() { echo -e "${RED}[install]${NC} $1" >&2; }
+info() { echo -e "${BLUE}[install]${NC} $1"; }
+
+# Parse args
+INSTALL_COMMANDS=true
+INSTALL_SYSTEMD=true
+
+for arg in "$@"; do
+    case $arg in
+        --no-commands) INSTALL_COMMANDS=false ;;
+        --no-systemd) INSTALL_SYSTEMD=false ;;
+        --help|-h)
+            echo "Usage: $0 [--no-commands] [--no-systemd]"
+            exit 0
+            ;;
+    esac
+done
+
+log "Installing LLM Relay Daemon"
+echo ""
+
+# 1. Create directory structure
+info "Creating directory structure..."
+mkdir -p "$LLM_SHARE"/{relay/{outbox,processed,log,state/locks},attacks,recovery,reviews,shared/{runbooks,docs}}
+mkdir -p "$BIN_DIR"
+
+# Initialize state files if missing
+[[ -f "$LLM_SHARE/relay/processed/offsets.json" ]] || echo '{}' > "$LLM_SHARE/relay/processed/offsets.json"
+[[ -f "$LLM_SHARE/relay/state/agents.json" ]] || echo '{}' > "$LLM_SHARE/relay/state/agents.json"
+
+# Placeholder files for Phase 3b
+touch "$LLM_SHARE/relay/state/checkpoint.json"
+touch "$LLM_SHARE/relay/state/handoff-marker"
+touch "$LLM_SHARE/relay/state/health.json"
+
+log "  ✓ Directory structure created"
+
+# 2. Build relay daemon
+info "Building relay daemon..."
+cd "$PROJECT_DIR"
+if command -v go &> /dev/null; then
+    GOCACHE=/tmp/go-build-cache go build -o "$BIN_DIR/relay-daemon" ./cmd/relay
+    log "  ✓ Relay daemon built: $BIN_DIR/relay-daemon"
+else
+    warn "  ⚠ Go not found, skipping daemon build"
+fi
+
+# 3. Install scripts
+info "Installing scripts..."
+cp "$SCRIPT_DIR/party-v2" "$BIN_DIR/party-v2"
+cp "$SCRIPT_DIR/s3-sync" "$BIN_DIR/s3-sync"
+chmod +x "$BIN_DIR/party-v2" "$BIN_DIR/s3-sync"
+log "  ✓ Scripts installed to $BIN_DIR"
+
+# 4. Install Claude commands
+if [[ "$INSTALL_COMMANDS" == "true" ]]; then
+    info "Installing Claude commands..."
+    mkdir -p "$CLAUDE_COMMANDS"
+
+    # Backup existing commands
+    for cmd in rec pc attack; do
+        if [[ -f "$CLAUDE_COMMANDS/$cmd.md" ]]; then
+            cp "$CLAUDE_COMMANDS/$cmd.md" "$CLAUDE_COMMANDS/$cmd.md.bak"
+            warn "  Backed up existing $cmd.md → $cmd.md.bak"
+        fi
+    done
+
+    # Install new commands
+    cp "$PROJECT_DIR/claude-commands/rec.md" "$CLAUDE_COMMANDS/rec.md"
+    cp "$PROJECT_DIR/claude-commands/pc.md" "$CLAUDE_COMMANDS/pc.md"
+    cp "$PROJECT_DIR/claude-commands/attack.md" "$CLAUDE_COMMANDS/attack.md"
+    log "  ✓ Claude commands installed"
+else
+    info "Skipping Claude commands (--no-commands)"
+fi
+
+# 5. Create systemd user service
+if [[ "$INSTALL_SYSTEMD" == "true" ]]; then
+    info "Creating systemd user service..."
+    mkdir -p "$HOME/.config/systemd/user"
+
+    cat > "$HOME/.config/systemd/user/relay-daemon.service" << EOF
+[Unit]
+Description=LLM Relay Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$BIN_DIR/relay-daemon
+Restart=on-failure
+RestartSec=5
+Environment=HOME=$HOME
+
+[Install]
+WantedBy=default.target
+EOF
+
+    cat > "$HOME/.config/systemd/user/s3-sync.service" << EOF
+[Unit]
+Description=LLM S3 Sync Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$BIN_DIR/s3-sync --daemon
+Restart=on-failure
+RestartSec=5
+Environment=HOME=$HOME
+
+[Install]
+WantedBy=default.target
+EOF
+
+    systemctl --user daemon-reload
+    log "  ✓ Systemd services created"
+    info "  To enable: systemctl --user enable relay-daemon s3-sync"
+    info "  To start:  systemctl --user start relay-daemon s3-sync"
+else
+    info "Skipping systemd setup (--no-systemd)"
+fi
+
+# 6. Add bin to PATH if needed
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+    warn "  ⚠ $BIN_DIR not in PATH"
+    info "  Add to your shell profile: export PATH=\"\$PATH:$BIN_DIR\""
+fi
+
+echo ""
+log "Installation complete!"
+echo ""
+info "Next steps:"
+info "  1. Start tmux layout:    party-v2"
+info "  2. Start relay daemon:   relay-daemon (or systemctl --user start relay-daemon)"
+info "  3. Start S3 sync:        s3-sync --daemon (or systemctl --user start s3-sync)"
+echo ""
+info "Documentation:"
+info "  - Protocol:  $PROJECT_DIR/docs/AGENT_PROTOCOL.md"
+info "  - Design:    $(dirname "$PROJECT_DIR")/INSTALL_PLAN.md"

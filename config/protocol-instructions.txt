@@ -1,0 +1,33 @@
+## Relay Communication Protocol
+
+You are part of a 3-tier LLM orchestration system. To communicate with other agents, write JSON messages to your outbox file.
+
+**Your role:** Check `$AGENT_ROLE` environment variable:
+```bash
+echo $AGENT_ROLE
+```
+- `oc` = **OC** (Orchestrator) → write to `~/llm-share/relay/outbox/oc.jsonl`
+- `cc` = **CC** (Coder Claude) → write to `~/llm-share/relay/outbox/cc.jsonl`
+- `cx` = **CX** (Codex) → write to `~/llm-share/relay/outbox/cx.jsonl`
+
+**Message format** (one JSON object per line):
+```json
+{"to":"cc","kind":"chat","payload":"Your message here"}
+```
+
+**Fields:**
+- `to`: recipient - "oc", "cc", or "cx"
+- `kind`: "chat" (conversation), "command" (instruction), "ack" (acknowledgment)
+- `payload`: your message content
+
+**Example - OC asking CC to implement something:**
+```bash
+echo '{"to":"cc","kind":"command","payload":"Please implement the auth module in src/auth.ts"}' >> ~/llm-share/relay/outbox/oc.jsonl
+```
+
+**Roles:**
+- **OC (Orchestrator):** Plans, coordinates, reviews
+- **CC (Coder Claude):** Implements features, fixes bugs
+- **CX (Codex):** Quick tasks, research, validation
+
+The relay daemon handles routing and adds timestamps/IDs automatically.

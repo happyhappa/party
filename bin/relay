@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# relay CLI wrapper
+# Usage: relay send <oc|cc|cx|all> "message"
+
+cmd="${1:-}"
+if [[ "$cmd" != "send" ]]; then
+  echo "Usage: relay send <oc|cc|cx|all> <message>" >&2
+  exit 2
+fi
+
+shift
+
+to="${1:-}"
+shift || true
+
+if [[ -z "$to" ]]; then
+  echo "Missing recipient. Use oc|cc|cx|all" >&2
+  exit 2
+fi
+
+case "$to" in
+  oc|cc|cx|all) ;;  # vog is sender-only, not a recipient
+  *)
+    echo "Invalid recipient: $to (use oc|cc|cx|all)" >&2
+    exit 2
+    ;;
+esac
+
+if [[ $# -lt 1 ]]; then
+  echo "Missing message payload" >&2
+  exit 2
+fi
+
+msg="$*"
+
+outbox_dir="/mnt/llm-share/relay/outbox"
+mkdir -p "$outbox_dir"
+
+# JSON escape
+payload=$(printf '%s' "$msg" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\r//g' -e ':a;N;$!ba;s/\n/\\n/g')
+
+from="${RELAY_FROM:-oc}"
+
+printf '{"to":"%s","kind":"chat","payload":"%s"}\n' "$to" "$payload" >> "$outbox_dir/${from}.jsonl"

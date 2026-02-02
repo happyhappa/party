@@ -1,0 +1,15 @@
+[Unit]
+Description=LLM Relay Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/phileas/.local/bin/relay-daemon
+Restart=on-failure
+RestartSec=5
+Environment=HOME=/home/phileas
+Environment=RELAY_PANE_TAIL_ENABLED=true
+Environment=RELAY_PROMPT_GATING=none
+
+[Install]
+WantedBy=default.target

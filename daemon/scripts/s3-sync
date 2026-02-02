@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+#
+# s3-sync - Sync local llm-share to S3 on file changes
+#
+# Watches ~/llm-share/{attacks,recovery,reviews} and syncs to S3.
+# Uses inotifywait for immediate sync on write.
+#
+# Usage: s3-sync [--daemon]
+#   --daemon: Run in background, log to ~/llm-share/relay/log/s3-sync.log
+#
+
+set -euo pipefail
+
+# Configuration
+LLM_SHARE="${LLM_SHARE_DIR:-$HOME/llm-share}"
+S3_BUCKET="${S3_BUCKET:-llm-orchestration-share}"
+S3_REGION="${AWS_REGION:-us-east-2}"
+MACHINE_NS="${MACHINE_NAMESPACE:-$(hostname -s)}"
+LOG_FILE="$LLM_SHARE/relay/log/s3-sync.log"
+
+# Directories to watch and sync
+WATCH_DIRS=("attacks" "recovery" "reviews")
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+log() {
+    local ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    echo -e "${GREEN}[$ts]${NC} $1"
+    if [[ "${DAEMON:-false}" == "true" ]]; then
+        echo "[$ts] $1" >> "$LOG_FILE"
+    fi
+}
+
+warn() {
+    local ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    echo -e "${YELLOW}[$ts] WARN:${NC} $1" >&2
+    if [[ "${DAEMON:-false}" == "true" ]]; then
+        echo "[$ts] WARN: $1" >> "$LOG_FILE"
+    fi
+}
+
+err() {
+    local ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    echo -e "${RED}[$ts] ERROR:${NC} $1" >&2
+    if [[ "${DAEMON:-false}" == "true" ]]; then
+        echo "[$ts] ERROR: $1" >> "$LOG_FILE"
+    fi
+}
+
+# Check dependencies
+check_deps() {
+    if ! command -v inotifywait &> /dev/null; then
+        err "inotifywait not found. Install with: sudo apt install inotify-tools"
+        exit 1
+    fi
+    if ! command -v aws &> /dev/null; then
+        err "aws CLI not found. Install with: sudo apt install awscli"
+        exit 1
+    fi
+}
+
+# Sync a single file to S3
+sync_file() {
+    local file="$1"
+    local rel_path="${file#$LLM_SHARE/}"
+    local s3_path="s3://$S3_BUCKET/machines/$MACHINE_NS/$rel_path"
+
+    if [[ -f "$file" ]]; then
+        log "Syncing: $rel_path → $s3_path"
+        if aws s3 cp "$file" "$s3_path" --region "$S3_REGION" --quiet; then
+            log "  ✓ Synced"
+        else
+            warn "  ✗ Failed to sync $rel_path"
+        fi
+    fi
+}
+
+# Sync entire directory to S3
+sync_dir() {
+    local dir="$1"
+    local local_path="$LLM_SHARE/$dir"
+    local s3_path="s3://$S3_BUCKET/machines/$MACHINE_NS/$dir/"
+
+    if [[ -d "$local_path" ]]; then
+        log "Full sync: $dir → $s3_path"
+        aws s3 sync "$local_path" "$s3_path" --region "$S3_REGION" --delete --quiet
+        log "  ✓ Synced"
+    fi
+}
+
+# Initial sync
+initial_sync() {
+    log "Performing initial sync..."
+    for dir in "${WATCH_DIRS[@]}"; do
+        sync_dir "$dir"
+    done
+    log "Initial sync complete"
+}
+
+# Watch for changes
+watch_and_sync() {
+    local watch_paths=()
+    for dir in "${WATCH_DIRS[@]}"; do
+        local path="$LLM_SHARE/$dir"
+        if [[ -d "$path" ]]; then
+            watch_paths+=("$path")
+        fi
+    done
+
+    if [[ ${#watch_paths[@]} -eq 0 ]]; then
+        err "No directories to watch"
+        exit 1
+    fi
+
+    log "Watching for changes in: ${WATCH_DIRS[*]}"
+    log "Press Ctrl+C to stop"
+
+    inotifywait -m -r -e close_write -e create -e delete -e moved_to \
+        --format '%w%f' "${watch_paths[@]}" 2>/dev/null | while read -r file; do
+        # Debounce: skip if same file changed within 1 second
+        sync_file "$file"
+    done
+}
+
+# Main
+main() {
+    check_deps
+
+    # Parse args
+    if [[ "${1:-}" == "--daemon" ]]; then
+        DAEMON=true
+        mkdir -p "$(dirname "$LOG_FILE")"
+        log "Starting in daemon mode, logging to $LOG_FILE"
+    fi
+
+    log "S3 Sync starting"
+    log "  Local:  $LLM_SHARE"
+    log "  Bucket: $S3_BUCKET"
+    log "  Region: $S3_REGION"
+    log "  Machine: $MACHINE_NS"
+
+    # Ensure directories exist
+    for dir in "${WATCH_DIRS[@]}"; do
+        mkdir -p "$LLM_SHARE/$dir"
+    done
+
+    initial_sync
+    watch_and_sync
+}
+
+main "$@"

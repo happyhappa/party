@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+#
+# party-v2 - Creates 3-tier tmux layout for LLM orchestration
+#
+# Layout (right column: CC 40%, CX 40%, relay 20%):
+# ┌────────────┬────────────────────┐
+# │            │        CC (40%)    │
+# │     OC     ├────────────────────┤
+# │            │        CX (40%)    │
+# │            ├────────────────────┤
+# │            │   relay (20%)      │
+# └────────────┴────────────────────┘
+#
+# Usage: party-v2 [session-name] [project-dir]
+#
+
+set -euo pipefail
+
+SESSION="${1:-party}"
+PROJECT_DIR="${2:-$HOME/Sandbox/leaseupcre}"
+LLM_SHARE="$HOME/llm-share"
+RELAY_LOG="$LLM_SHARE/relay/log/events.jsonl"
+
+# Colors for status
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+log() {
+    echo -e "${GREEN}[party-v2]${NC} $1"
+}
+
+err() {
+    echo -e "${RED}[party-v2]${NC} $1" >&2
+}
+
+# Check if session already exists
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+    log "Session '$SESSION' already exists. Attaching..."
+    exec tmux attach -t "$SESSION"
+fi
+
+# Ensure relay log file exists for tail
+mkdir -p "$(dirname "$RELAY_LOG")"
+touch "$RELAY_LOG"
+
+log "Creating session '$SESSION' with 3-tier layout..."
+
+# Create session with OC pane (left side)
+tmux new-session -d -s "$SESSION" -n main -c "$PROJECT_DIR"
+
+# Split right side (60% width for right column)
+tmux split-window -h -l 60% -t "$SESSION:main.0" -c "$PROJECT_DIR"
+
+# Split right column into 2 rows: CC (50%), CX (50%)
+tmux split-window -v -l 50% -t "$SESSION:main.1" -c "$PROJECT_DIR"
+
+# Name panes using select-pane -T (tmux 2.6+)
+tmux select-pane -t "$SESSION:main.0" -T "OC"
+tmux select-pane -t "$SESSION:main.1" -T "CC"
+tmux select-pane -t "$SESSION:main.2" -T "CX"
+
+# Set pane border format to show titles (tmux 2.6+)
+tmux set-option -t "$SESSION" pane-border-status top
+tmux set-option -t "$SESSION" pane-border-format " #{pane_title} "
+
+# Select OC pane as default
+tmux select-pane -t "$SESSION:main.0"
+
+log "Layout created. Pane IDs:"
+tmux list-panes -t "$SESSION:main" -F "  #{pane_index}: #{pane_title} (#{pane_id})"
+
+# Write pane map for relay daemon (title -> pane_id)
+PANE_MAP="$LLM_SHARE/relay/state/panes.json"
+log "Writing pane map to $PANE_MAP"
+{
+    echo "{"
+    tmux list-panes -t "$SESSION:main" -F '"#{pane_title}": "#{pane_id}",' | sed '$ s/,$//'
+    echo "}"
+} > "$PANE_MAP"
+
+log ""
+log "To start agents manually:"
+log "  OC: claude -c --dangerously-skip-permissions"
+log "  CC: claude -c --dangerously-skip-permissions"
+log "  CX: codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share"
+log ""
+
+# Attach to session
+exec tmux attach -t "$SESSION"
