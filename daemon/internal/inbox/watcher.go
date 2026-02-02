@@ -1,9 +1,7 @@
 package inbox
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -21,7 +19,6 @@ type Watcher struct {
 	events   chan *envelope.Envelope
 	mu       sync.Mutex
 	offsets  map[string]int64
-	rest     map[string][]byte
 	valid    map[string]struct{}
 }
 
@@ -36,7 +33,6 @@ func NewWatcher(inboxDir string) (*Watcher, error) {
 		watcher:  watcher,
 		events:   make(chan *envelope.Envelope, 1024),
 		offsets:  make(map[string]int64),
-		rest:     make(map[string][]byte),
 		valid: map[string]struct{}{
 			"oc":  {},
 			"cc":  {},
@@ -55,31 +51,39 @@ func (w *Watcher) Start(ctx context.Context) error {
 		return err
 	}
 
+	if err := w.watchSubdirs(); err != nil {
+		return err
+	}
+
 	if err := w.readExisting(); err != nil {
 		return err
 	}
 
 	for {
 		select {
-	case <-ctx.Done():
-		close(w.events)
-		return nil
-	case err := <-w.watcher.Errors:
-		if err != nil {
-			return err
-		}
+		case <-ctx.Done():
+			close(w.events)
+			return nil
+		case err := <-w.watcher.Errors:
+			if err != nil {
+				return err
+			}
 		case event := <-w.watcher.Events:
+			if event.Op&fsnotify.Create != 0 {
+				if err := w.addWatchIfDir(event.Name); err != nil {
+					return err
+				}
+			}
 			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
 				if err := w.readNew(event.Name); err != nil {
 					return err
 				}
 			}
-	if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
-		w.mu.Lock()
-		delete(w.offsets, event.Name)
-		delete(w.rest, event.Name)
-		w.mu.Unlock()
-	}
+			if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+				w.mu.Lock()
+				delete(w.offsets, event.Name)
+				w.mu.Unlock()
+			}
 		}
 	}
 }
@@ -107,7 +111,7 @@ func (w *Watcher) SetOffsets(offsets map[string]int64) {
 }
 
 func (w *Watcher) readExisting() error {
-	pattern := filepath.Join(w.inboxDir, "*.jsonl")
+	pattern := filepath.Join(w.inboxDir, "*", "*.msg")
 	files, err := filepath.Glob(pattern)
 	if err != nil {
 		return err
@@ -132,40 +136,21 @@ func (w *Watcher) readNew(path string) error {
 	if info.IsDir() {
 		return nil
 	}
+	if filepath.Ext(path) != ".msg" {
+		return nil
+	}
 
 	w.mu.Lock()
 	offset := w.offsets[path]
-	prefix := w.rest[path]
 	w.mu.Unlock()
 
 	if offset > info.Size() {
 		w.mu.Lock()
 		w.offsets[path] = 0
-		w.rest[path] = nil
 		w.mu.Unlock()
 		offset = 0
-		prefix = nil
 	}
-
-	file, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			log.Printf("outbox file missing %s (skipping)", path)
-			return nil
-		}
-		return err
-	}
-	defer file.Close()
-
-	if _, err := file.Seek(offset, 0); err != nil {
-		return err
-	}
-
-	chunk, err := io.ReadAll(file)
-	if err != nil {
-		return err
-	}
-	if len(chunk) == 0 {
+	if offset == info.Size() {
 		return nil
 	}
 
@@ -176,45 +161,74 @@ func (w *Watcher) readNew(path string) error {
 	}
 	defaults := Defaults{From: agent}
 
-	payload := append(prefix, chunk...)
-	lines := bytes.Split(payload, []byte("\n"))
-	lastIdx := len(lines) - 1
-	var remainder []byte
-	if len(payload) > 0 && payload[len(payload)-1] != '\n' {
-		remainder = lines[lastIdx]
-		lines = lines[:lastIdx]
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("outbox file missing %s (skipping)", path)
+			return nil
+		}
+		return err
+	}
+	if len(data) == 0 {
+		return nil
 	}
 
-	for _, line := range lines {
-		env, err := ParseLineWithDefaults(line, defaults)
-		if err != nil {
-			log.Printf("outbox parse error %s: %v (skipping)", path, err)
-			continue
-		}
-		if env != nil {
-			select {
-			case w.events <- env:
-			default:
-				log.Printf("outbox event dropped (channel full): %s -> %s", env.From, env.To)
-			}
+	env, err := ParseMessageWithDefaults(data, defaults)
+	if err != nil {
+		log.Printf("outbox parse error %s: %v (skipping)", path, err)
+		return nil
+	}
+	if env != nil {
+		select {
+		case w.events <- env:
+		default:
+			log.Printf("outbox event dropped (channel full): %s -> %s", env.From, env.To)
 		}
 	}
 
 	w.mu.Lock()
-	w.offsets[path] = offset + int64(len(chunk))
-	w.rest[path] = remainder
+	w.offsets[path] = info.Size()
 	w.mu.Unlock()
 
 	return nil
 }
 
 func agentFromPath(path string) string {
-	base := filepath.Base(path)
-	name := strings.TrimSuffix(base, filepath.Ext(base))
-	return strings.ToLower(name)
+	dir := filepath.Base(filepath.Dir(path))
+	return strings.ToLower(dir)
 }
 
 func (w *Watcher) isValidAgent(agent string) bool {
 	_, ok := w.valid[agent]
 	return ok
+}
+
+func (w *Watcher) watchSubdirs() error {
+	entries, err := os.ReadDir(w.inboxDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if err := w.watcher.Add(filepath.Join(w.inboxDir, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *Watcher) addWatchIfDir(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	return w.watcher.Add(path)
 }
