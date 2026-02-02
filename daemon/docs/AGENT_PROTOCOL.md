@@ -118,34 +118,24 @@ The relay fills the rest.
 
 ---
 
-## Bash One-Liners for Testing
+## Sending Messages
 
-### Write a Test Message (Claude Code → Codex)
+### Using the Relay CLI (Recommended)
+
+The `relay` CLI handles JSON formatting and escaping automatically:
 
 ```bash
-echo '{"to":"cx","kind":"chat","payload":"Hello from Claude Code!"}' >> ~/llm-share/relay/outbox/cc.jsonl
+relay send cx "Hello from Claude Code!"
+relay send oc "Task complete: implemented feature X"
+relay send all "Checkpoint reached"
 ```
 
-### Write with jq (Safer, Handles Escaping)
+### Manual JSONL (Advanced/Debugging)
+
+For testing or debugging, you can write JSONL directly:
 
 ```bash
-jq -nc \
-  --arg payload "Task complete: implemented feature X" \
-  '{to:"cx",kind:"event",priority:1,payload:$payload}' \
-  >> ~/llm-share/relay/outbox/cc.jsonl
-```
-
-### Atomic Write (Recommended for Production)
-
-```bash
-OUTBOX=~/llm-share/relay/outbox
-TMPFILE=$(mktemp)
-jq -nc \
-  --arg payload "Your message here" \
-  '{to:"cx",kind:"command",priority:1,payload:$payload}' \
-  > "$TMPFILE"
-cat "$TMPFILE" >> "$OUTBOX/cc.jsonl"
-rm "$TMPFILE"
+echo '{"to":"cx","kind":"chat","payload":"Test message"}' >> ~/llm-share/relay/outbox/cc.jsonl
 ```
 
 ---

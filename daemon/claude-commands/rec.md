@@ -32,15 +32,12 @@ Remind about relay communication protocol:
 
 **To send messages to other agents:**
 ```bash
-# Write JSONL to your inbox file
-echo '{"msg_id":"msg-'$(openssl rand -hex 4)'","ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","project_id":"leaseupcre","from":"YOUR_ID","to":"TARGET","kind":"chat","priority":1,"payload":"Your message","ephemeral":false}' >> ~/llm-share/relay/inbox/YOUR_ID.jsonl
+relay send <oc|cc|cx|all> "Your message here"
 ```
 
-Where:
-- YOUR_ID = `oc`, `cc`, or `cx` (depending on your role)
-- TARGET = `oc`, `cc`, or `cx` (who you're sending to)
+Check your role with `echo $AGENT_ROLE` (returns `oc`, `cc`, or `cx`).
 
-**Full protocol doc:** `~/Sandbox/orchestration_communication/relay-daemon/docs/AGENT_PROTOCOL.md`
+**Full protocol doc:** `~/llm-share/relay/protocol-instructions.txt`
 
 ### 5. Offer next steps
 Ask if the user wants to:

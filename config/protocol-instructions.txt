@@ -1,28 +1,26 @@
 ## Relay Communication Protocol
 
-You are part of a 3-tier LLM orchestration system. To communicate with other agents, write JSON messages to your outbox file.
+You are part of a 3-tier LLM orchestration system. To communicate with other agents, use the `relay` CLI.
 
 **Your role:** Check `$AGENT_ROLE` environment variable:
 ```bash
 echo $AGENT_ROLE
 ```
-- `oc` = **OC** (Orchestrator) → write to `~/llm-share/relay/outbox/oc.jsonl`
-- `cc` = **CC** (Coder Claude) → write to `~/llm-share/relay/outbox/cc.jsonl`
-- `cx` = **CX** (Codex) → write to `~/llm-share/relay/outbox/cx.jsonl`
+- `oc` = **OC** (Orchestrator)
+- `cc` = **CC** (Coder Claude)
+- `cx` = **CX** (Codex)
 
-**Message format** (one JSON object per line):
-```json
-{"to":"cc","kind":"chat","payload":"Your message here"}
+**Send messages:**
+```bash
+relay send <oc|cc|cx|all> "Your message here"
 ```
 
-**Fields:**
-- `to`: recipient - "oc", "cc", or "cx"
-- `kind`: "chat" (conversation), "command" (instruction), "ack" (acknowledgment)
-- `payload`: your message content
-
-**Example - OC asking CC to implement something:**
+**Examples:**
 ```bash
-echo '{"to":"cc","kind":"command","payload":"Please implement the auth module in src/auth.ts"}' >> ~/llm-share/relay/outbox/oc.jsonl
+relay send oc "Task complete - ready for review"
+relay send cc "Please implement the auth module"
+relay send cx "Run tests on the engine package"
+relay send all "Checkpoint reached - stand by"
 ```
 
 **Roles:**
@@ -30,4 +28,4 @@ echo '{"to":"cc","kind":"command","payload":"Please implement the auth module in
 - **CC (Coder Claude):** Implements features, fixes bugs
 - **CX (Codex):** Quick tasks, research, validation
 
-The relay daemon handles routing and adds timestamps/IDs automatically.
+The relay CLI handles JSON formatting, escaping, and routing automatically.

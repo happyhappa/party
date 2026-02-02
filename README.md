@@ -70,10 +70,8 @@ cp config/protocol-instructions.txt ~/llm-share/relay/
 party
 
 # Send a message (from any agent)
-echo '{"to":"cc","kind":"chat","payload":"Hello CC"}' >> ~/llm-share/relay/outbox/oc.jsonl
-
-# Or use the relay CLI
 relay send cc "Hello CC"
+relay send all "Broadcast to everyone"
 
 # Check daemon status
 systemctl --user status relay-daemon
