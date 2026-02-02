@@ -190,6 +190,10 @@ func (w *Watcher) readNew(path string) error {
 	w.offsets[path] = info.Size()
 	w.mu.Unlock()
 
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
 	return nil
 }
 

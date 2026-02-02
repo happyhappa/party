@@ -54,6 +54,7 @@ func ParseMessageWithDefaults(message []byte, defaults Defaults) (*envelope.Enve
 	env := envelope.Envelope{
 		Payload: body,
 	}
+	prioritySet := false
 
 	for _, line := range headers {
 		line = strings.TrimSpace(line)
@@ -94,6 +95,7 @@ func ParseMessageWithDefaults(message []byte, defaults Defaults) (*envelope.Enve
 				return nil, fmt.Errorf("rmf: invalid priority %q: %w", value, err)
 			}
 			env.Priority = priority
+			prioritySet = true
 		case "ephemeral":
 			if value == "" {
 				continue
@@ -121,7 +123,10 @@ func ParseMessageWithDefaults(message []byte, defaults Defaults) (*envelope.Enve
 	if env.Timestamp == "" {
 		env.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	}
-	if env.Priority == 0 {
+	if env.Kind == "" {
+		env.Kind = "chat"
+	}
+	if !prioritySet {
 		env.Priority = 1
 	}
 

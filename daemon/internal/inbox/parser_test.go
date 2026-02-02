@@ -66,6 +66,20 @@ func TestParseMessageWithHeaders(t *testing.T) {
 	}
 }
 
+func TestParseMessagePriorityZero(t *testing.T) {
+	msg := "TO: oc\nPRIORITY: 0\n---\nbody"
+	env, err := ParseMessage([]byte(msg))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if env == nil {
+		t.Fatal("expected envelope")
+	}
+	if env.Priority != 0 {
+		t.Fatalf("expected priority 0, got %d", env.Priority)
+	}
+}
+
 func TestParseMessageMissingTo(t *testing.T) {
 	msg := "FROM: oc\n---\nbody"
 	_, err := ParseMessage([]byte(msg))
