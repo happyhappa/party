@@ -71,7 +71,7 @@ func (p *PaneTailer) captureAll() {
 	for _, name := range keys {
 		pane := p.paneMap[name]
 		if err := p.capturePane(strings.ToLower(name), pane); err != nil {
-			_ = p.logger.Log(logpkg.Event{Kind: "pane_tail_error", Target: name, Error: err.Error()})
+			_ = p.logger.Log(logpkg.NewEvent(logpkg.EventTypePaneTailError, "relay", name).WithError(err.Error()))
 			continue
 		}
 	}

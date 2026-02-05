@@ -78,6 +78,72 @@ systemctl --user status relay-daemon
 journalctl --user -u relay-daemon -f
 ```
 
+## Context Capture Commands
+
+Commands for managing agent context across sessions (RFC-002):
+
+| Command | Description |
+|---------|-------------|
+| `/checkpoint` | Create a checkpoint bead capturing current session state |
+| `/restore` | Restore context from checkpoint + session log tail |
+| `/plan` | Create and manage implementation plans |
+| `/task` | Create and manage tasklets within milestones |
+| `/thread` | View tasklets grouped by thread |
+
+### Checkpoint & Recovery
+
+```bash
+# Create a checkpoint before context compaction
+/checkpoint
+
+# Restore context after session restart
+/restore
+```
+
+Checkpoints capture: current goal, key decisions, blockers, and next steps. The system also supports automatic pre-compact and session-end checkpoints via hooks.
+
+### Plan Management
+
+```bash
+# Create a new plan
+/plan create "RFC-002 Phase 5"
+
+# List all plans
+/plan
+
+# Show plan details
+/plan show <plan_id>
+
+# Update plan status
+/plan status <plan_id> active
+```
+
+### Task Management
+
+```bash
+# Create a tasklet in a milestone
+/task create <plan_id> <milestone_num>
+
+# List tasklets
+/task list <plan_id>
+
+# Update tasklet status
+/task status <tasklet_id> done
+
+# Assign tasklet to agent
+/task assign <tasklet_id> cc
+```
+
+### Thread View
+
+```bash
+# View tasklets grouped by thread
+/thread
+
+# View threads for a specific plan
+/thread <plan_id>
+```
+
 ## Environment Variables
 
 Agents receive `AGENT_ROLE` environment variable set by party script:

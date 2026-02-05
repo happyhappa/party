@@ -9,12 +9,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/norm/relay-daemon/internal/admin"
 	cfgpkg "github.com/norm/relay-daemon/internal/config"
 	inbox "github.com/norm/relay-daemon/internal/inbox"
 	logpkg "github.com/norm/relay-daemon/internal/log"
 	"github.com/norm/relay-daemon/internal/state"
 	"github.com/norm/relay-daemon/internal/supervisor"
 	tmuxpkg "github.com/norm/relay-daemon/internal/tmux"
+	"github.com/norm/relay-daemon/pkg/envelope"
 )
 
 func main() {
@@ -58,6 +60,16 @@ func main() {
 		watcher.SetOffsets(offsets)
 	}
 
+	// Initialize admin daemon for checkpoint coordination
+	adminCfg := admin.DefaultConfig()
+	adminCfg.StateDir = cfg.StateDir
+	adminDaemon := admin.New(adminCfg, nil, logger, injector, nil)
+
+	// Create message router for admin-destined messages
+	messageRouter := admin.NewMessageRouter(adminDaemon, func(env *envelope.Envelope) error {
+		return injector.Inject(env)
+	})
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -79,6 +91,11 @@ func main() {
 	go func() {
 		if err := super.Start(ctx); err != nil {
 			errCh <- err
+		}
+	}()
+	go func() {
+		if err := adminDaemon.Start(ctx); err != nil {
+			log.Printf("admin daemon: %v", err)
 		}
 	}()
 	if paneTailer != nil {
@@ -105,20 +122,32 @@ func main() {
 			if !ok {
 				return
 			}
-			_ = logger.Log(logpkg.Event{Kind: "received", MsgID: env.MsgID, Target: env.To})
+			_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeReceived, env.From, env.To).WithMsgID(env.MsgID))
+
+			// Record relay activity for checkpoint timing
+			adminDaemon.RecordRelayActivity()
+
+			// Handle broadcast to all agents
 			if env.To == "all" {
 				for _, target := range []string{"oc", "cc", "cx"} {
 					cloned := *env
 					cloned.To = target
 					if err := injector.Inject(&cloned); err != nil {
-						_ = logger.Log(logpkg.Event{Kind: "error", MsgID: env.MsgID, Target: target, Error: err.Error()})
+						_ = logger.Log(logpkg.NewEvent("error", env.From, target).WithMsgID(env.MsgID).WithError(err.Error()))
 						continue
 					}
 				}
 				continue
 			}
-			if err := injector.Inject(env); err != nil {
-				_ = logger.Log(logpkg.Event{Kind: "error", MsgID: env.MsgID, Target: env.To, Error: err.Error()})
+
+			// Route message (admin-destined messages handled internally)
+			handled, err := messageRouter.Route(env)
+			if err != nil {
+				_ = logger.Log(logpkg.NewEvent("error", env.From, env.To).WithMsgID(env.MsgID).WithError(err.Error()))
+				continue
+			}
+			if handled {
+				// Message was handled by admin, already logged
 				continue
 			}
 		}

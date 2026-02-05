@@ -65,7 +65,7 @@ func (n *Nagger) Check() error {
 		start := n.ensureNagStart(attack.AttackID, now)
 		if now.Sub(start) >= n.maxNagDuration {
 			n.clearNagState(attack.AttackID)
-			_ = n.logger.Log(logpkg.Event{Kind: "nag_giveup", MsgID: attack.AttackID, Target: "oc"})
+			_ = n.logger.Log(logpkg.NewEvent("nag_giveup", "relay", "oc").WithMsgID(attack.AttackID))
 			_ = n.attacks.AppendEvent(attack.AttackID, state.StateEvent{
 				Kind:    "nag_giveup",
 				Actor:   "relay",
@@ -87,12 +87,12 @@ func (n *Nagger) Check() error {
 		env.Ephemeral = true
 
 		if err := n.injector.Inject(env); err != nil {
-			_ = n.logger.Log(logpkg.Event{Kind: "error", MsgID: env.MsgID, Target: env.To, Error: err.Error()})
+			_ = n.logger.Log(logpkg.NewEvent("error", env.From, env.To).WithMsgID(env.MsgID).WithError(err.Error()))
 			continue
 		}
 
 		n.recordNag(attack.AttackID, now)
-		_ = n.logger.Log(logpkg.Event{Kind: "nag", MsgID: env.MsgID, Target: env.To})
+		_ = n.logger.Log(logpkg.NewEvent("nag", env.From, env.To).WithMsgID(env.MsgID))
 		_ = n.attacks.AppendEvent(attack.AttackID, state.StateEvent{
 			Kind:    "nag_sent",
 			Actor:   "relay",

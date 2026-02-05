@@ -22,9 +22,9 @@ func (r *RecoveryHandler) HandleWake(target string) error {
 	env := envelope.NewEnvelope("relay", target, "event", message)
 	env.Ephemeral = true
 	if err := r.injector.Inject(env); err != nil {
-		_ = r.logger.Log(logpkg.Event{Kind: "error", MsgID: env.MsgID, Target: env.To, Error: err.Error()})
+		_ = r.logger.Log(logpkg.NewEvent("error", env.From, env.To).WithMsgID(env.MsgID).WithError(err.Error()))
 		return err
 	}
-	_ = r.logger.Log(logpkg.Event{Kind: "recovery", MsgID: env.MsgID, Target: env.To})
+	_ = r.logger.Log(logpkg.NewEvent("recovery", env.From, env.To).WithMsgID(env.MsgID))
 	return nil
 }

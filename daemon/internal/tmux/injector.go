@@ -94,7 +94,7 @@ func (i *Injector) Inject(env *envelope.Envelope) error {
 	item := &queuedMessage{env: env, enqueued: time.Now()}
 	pq := i.getQueue(env.To, target)
 	pq.enqueue(item)
-	i.logEvent("enqueue", env.MsgID, env.To, "")
+	i.logEvent(logpkg.EventTypeEnqueue, env.From, env.To, env.MsgID, "")
 	return nil
 }
 
@@ -163,18 +163,18 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 		}
 
 		if injector.queueMaxAge > 0 && time.Since(item.enqueued) > injector.queueMaxAge {
-			injector.logEvent("drop", item.env.MsgID, pq.target, truncateForLog(item.env.Payload))
+			injector.logEvent("drop", item.env.From, pq.target, item.env.MsgID, truncateForLog(item.env.Payload))
 			continue
 		}
 
-		injector.logEvent("dequeue", item.env.MsgID, pq.target, "")
+		injector.logEvent(logpkg.EventTypeDequeue, item.env.From, pq.target, item.env.MsgID, "")
 
 		ready, tail, err := injector.IsPaneReady(pq.paneID, pq.target)
 		if err != nil || !ready {
 			if tail == "" && err != nil {
 				tail = err.Error()
 			}
-			injector.logEvent("blocked", item.env.MsgID, pq.target, truncateForLog(tail))
+			injector.logEvent(logpkg.EventTypeBlocked, item.env.From, pq.target, item.env.MsgID, truncateForLog(tail))
 			item.backoff = nextBackoff(item.backoff)
 			pq.requeueFront(item)
 			if !sleepOrDone(ctx, item.backoff) {
@@ -184,7 +184,7 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 		}
 
 		if err := injector.tmux.SendToPane(pq.paneID, item.env.Payload); err != nil {
-			injector.logEvent("blocked", item.env.MsgID, pq.target, truncateForLog(err.Error()))
+			injector.logEvent(logpkg.EventTypeBlocked, item.env.From, pq.target, item.env.MsgID, truncateForLog(err.Error()))
 			item.backoff = nextBackoff(item.backoff)
 			pq.requeueFront(item)
 			if !sleepOrDone(ctx, item.backoff) {
@@ -193,7 +193,7 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 			continue
 		}
 
-		injector.logEvent("inject", item.env.MsgID, pq.target, "")
+		injector.logEvent(logpkg.EventTypeInject, item.env.From, pq.target, item.env.MsgID, "")
 	}
 }
 
@@ -285,9 +285,13 @@ func truncateForLog(text string) string {
 	return trimmed[len(trimmed)-max:]
 }
 
-func (i *Injector) logEvent(kind, msgID, target, errText string) {
+func (i *Injector) logEvent(eventType, from, to, msgID, errText string) {
 	if i.logger == nil {
 		return
 	}
-	_ = i.logger.Log(logpkg.Event{Kind: kind, MsgID: msgID, Target: target, Error: errText})
+	evt := logpkg.NewEvent(eventType, from, to).WithMsgID(msgID)
+	if errText != "" {
+		evt = evt.WithError(errText)
+	}
+	_ = i.logger.Log(evt)
 }

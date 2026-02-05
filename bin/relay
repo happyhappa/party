@@ -2,54 +2,141 @@
 set -euo pipefail
 
 # relay CLI wrapper - RMF v2 format
-# Usage: relay send <oc|cc|cx|all> "message"
-
-cmd="${1:-}"
-if [[ "$cmd" != "send" ]]; then
-  echo "Usage: relay send <oc|cc|cx|all> <message>" >&2
-  exit 2
-fi
-
-shift
-
-to="${1:-}"
-shift || true
-
-if [[ -z "$to" ]]; then
-  echo "Missing recipient. Use oc|cc|cx|all" >&2
-  exit 2
-fi
-
-case "$to" in
-  oc|cc|cx|all) ;;
-  *)
-    echo "Invalid recipient: $to (use oc|cc|cx|all)" >&2
-    exit 2
-    ;;
-esac
-
-if [[ $# -lt 1 ]]; then
-  echo "Missing message payload" >&2
-  exit 2
-fi
-
-msg="$*"
+# Usage: relay send <oc|cc|cx|all|admin> "message"
+#        relay checkpoint <chk_id> "content" [--title "title"] [--labels "k1:v1,k2:v2"]
 
 # Determine sender from AGENT_ROLE env var (default: oc)
 from="${AGENT_ROLE:-oc}"
 
-# Outbox directory structure: outbox/<from>/
-outbox_dir="/mnt/llm-share/relay/outbox/${from}"
-mkdir -p "$outbox_dir"
+# Function to send a message via RMF v2 format
+send_message() {
+  local to="$1"
+  local msg="$2"
+  local kind="${3:-chat}"
 
-# Generate filename: <timestamp>-<rand>.msg
-timestamp=$(date +%Y%m%d_%H%M%S)
-rand=$(head -c 4 /dev/urandom | xxd -p)
-filename="${timestamp}-${rand}.msg"
+  # Outbox directory structure: outbox/<from>/
+  local outbox_dir="/mnt/llm-share/relay/outbox/${from}"
+  mkdir -p "$outbox_dir"
 
-# Write RMF v2 format: TO header, separator, body
-cat > "${outbox_dir}/${filename}" << EOF
+  # Generate filename: <timestamp>-<rand>.msg
+  local timestamp
+  timestamp=$(date +%Y%m%d_%H%M%S)
+  local rand
+  rand=$(head -c 4 /dev/urandom | xxd -p)
+  local filename="${timestamp}-${rand}.msg"
+
+  # Write RMF v2 format: TO header, KIND header, separator, body
+  cat > "${outbox_dir}/${filename}" << EOF
 TO: ${to}
+KIND: ${kind}
 ---
 ${msg}
 EOF
+}
+
+cmd="${1:-}"
+
+case "$cmd" in
+  send)
+    shift
+    to="${1:-}"
+    shift || true
+
+    if [[ -z "$to" ]]; then
+      echo "Missing recipient. Use oc|cc|cx|all|admin" >&2
+      exit 2
+    fi
+
+    case "$to" in
+      oc|cc|cx|all|admin) ;;
+      *)
+        echo "Invalid recipient: $to (use oc|cc|cx|all|admin)" >&2
+        exit 2
+        ;;
+    esac
+
+    if [[ $# -lt 1 ]]; then
+      echo "Missing message payload" >&2
+      exit 2
+    fi
+
+    msg="$*"
+    send_message "$to" "$msg" "chat"
+    ;;
+
+  checkpoint)
+    # Send checkpoint content to admin (single-writer enforcement)
+    # Usage: relay checkpoint <chk_id> "content" [--title "title"] [--labels "k1:v1,k2:v2"]
+    shift
+    chk_id="${1:-}"
+    shift || true
+
+    if [[ -z "$chk_id" ]]; then
+      echo "Missing chk_id" >&2
+      exit 2
+    fi
+
+    content=""
+    title=""
+    labels=""
+
+    # Parse remaining args
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --title)
+          shift
+          title="${1:-}"
+          shift || true
+          ;;
+        --labels)
+          shift
+          labels="${1:-}"
+          shift || true
+          ;;
+        *)
+          if [[ -z "$content" ]]; then
+            content="$1"
+          else
+            content="$content $1"
+          fi
+          shift
+          ;;
+      esac
+    done
+
+    if [[ -z "$content" ]]; then
+      echo "Missing checkpoint content" >&2
+      exit 2
+    fi
+
+    # Build JSON payload for checkpoint_content
+    # Escape content for JSON
+    json_content=$(printf '%s' "$content" | jq -Rs .)
+    json_title=$(printf '%s' "$title" | jq -Rs .)
+
+    # Build labels object
+    if [[ -n "$labels" ]]; then
+      # Convert "k1:v1,k2:v2" to {"k1":"v1","k2":"v2"}
+      labels_json=$(echo "$labels" | tr ',' '\n' | while IFS=: read -r k v; do
+        printf '"%s":"%s",' "$k" "$v"
+      done | sed 's/,$//')
+      labels_json="{${labels_json}}"
+    else
+      labels_json="{}"
+    fi
+
+    payload=$(cat << EOF
+{"chk_id":"${chk_id}","role":"${from}","content":${json_content},"title":${json_title},"labels":${labels_json}}
+EOF
+)
+
+    send_message "admin" "$payload" "checkpoint_content"
+    echo "Checkpoint sent: chk_id=${chk_id}"
+    ;;
+
+  *)
+    echo "Usage: relay send <oc|cc|cx|all|admin> <message>" >&2
+    echo "       relay checkpoint <chk_id> <content> [--title <title>] [--labels <k1:v1,k2:v2>]" >&2
+    exit 2
+    ;;
+esac
