@@ -63,6 +63,21 @@ func main() {
 	// Initialize admin daemon for checkpoint coordination
 	adminCfg := admin.DefaultConfig()
 	adminCfg.StateDir = cfg.StateDir
+	if cfg.CheckpointIdleThreshold != nil {
+		adminCfg.RelayIdleThreshold = *cfg.CheckpointIdleThreshold
+	}
+	if cfg.CheckpointLogStable != nil {
+		adminCfg.SessionLogStableThreshold = *cfg.CheckpointLogStable
+	}
+	if cfg.CheckpointMinInterval != nil {
+		adminCfg.MinCheckpointInterval = *cfg.CheckpointMinInterval
+	}
+	if cfg.CheckpointCooldown != nil {
+		adminCfg.CooldownAfterCheckpoint = *cfg.CheckpointCooldown
+	}
+	if cfg.CheckpointACKTimeout != nil {
+		adminCfg.ACKTimeout = *cfg.CheckpointACKTimeout
+	}
 	adminDaemon := admin.New(adminCfg, nil, logger, injector, nil)
 
 	// Create message router for admin-destined messages
