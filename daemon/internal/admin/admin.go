@@ -289,6 +289,11 @@ func (a *Admin) checkTriggers() {
 	paths := a.getSessionLogPathsLocked()
 
 	for role := range paths {
+		// Skip roles that don't support checkpoint skill (e.g. Codex agents)
+		if role == "cx" {
+			continue
+		}
+
 		// Skip if already has pending request
 		if _, pending := a.pendingRequests[role]; pending {
 			continue
@@ -347,6 +352,8 @@ func (a *Admin) checkTimeouts() {
 			// Timeout - trigger autogen fallback
 			a.logEventWithChkID(logpkg.EventTypeTimeout, "admin", role, pending.ChkID, "timeout", "")
 			delete(a.pendingRequests, role)
+			a.lastCheckpointTime[role] = now
+			a.cooldownUntil[role] = now.Add(a.cfg.CooldownAfterCheckpoint)
 
 			if a.metrics != nil {
 				a.metrics.RecordCheckpointTimeout()
@@ -438,7 +445,7 @@ func (a *Admin) sendCheckpointRequest(role string) {
 	chkID := generateChkID()
 
 	// Create checkpoint request message
-	message := "[CHECKPOINT_REQUEST] chk_id=" + chkID
+	message := "/checkpoint --respond " + chkID
 	env := envelope.NewEnvelope("admin", role, "checkpoint_request", message)
 	env.Priority = 0 // Urgent
 	env.Ephemeral = true

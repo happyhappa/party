@@ -5,6 +5,7 @@ package autogen
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -232,7 +233,8 @@ func (r *Result) WriteBead() (string, error) {
 
 	args = append(args, "--body", r.Content)
 
-	cmd := exec.Command("bd", args...)
+	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
+	cmd := exec.Command(bdPath, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("bd create: %w: %s", err, string(output))

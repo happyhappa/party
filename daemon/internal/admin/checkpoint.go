@@ -5,6 +5,7 @@ package admin
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -129,7 +130,8 @@ func (a *Admin) writeBeadForAgent(cc *CheckpointContent) (string, error) {
 
 	args = append(args, "--body", cc.Content)
 
-	cmd := exec.Command("bd", args...)
+	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
+	cmd := exec.Command(bdPath, args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("bd create: %w: %s", err, string(output))
