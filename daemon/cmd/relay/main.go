@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/norm/relay-daemon/internal/admin"
+	"github.com/norm/relay-daemon/internal/autogen"
 	cfgpkg "github.com/norm/relay-daemon/internal/config"
+	"github.com/norm/relay-daemon/internal/haiku"
 	inbox "github.com/norm/relay-daemon/internal/inbox"
 	logpkg "github.com/norm/relay-daemon/internal/log"
 	"github.com/norm/relay-daemon/internal/state"
@@ -63,7 +65,32 @@ func main() {
 	// Initialize admin daemon for checkpoint coordination
 	adminCfg := admin.DefaultConfig()
 	adminCfg.StateDir = cfg.StateDir
-	adminDaemon := admin.New(adminCfg, nil, logger, injector, nil)
+
+	// Create PodConfig for session log discovery
+	// Worktree paths loaded from environment (set by ~/.party/env.sh)
+	podCfg := &admin.PodConfig{
+		PodName: "party",
+		Panes:   cfg.PaneTargets,
+		Worktrees: map[string]string{
+			"oc": os.Getenv("PARTY_OC_WORKTREE"),
+			"cc": os.Getenv("PARTY_CC_WORKTREE"),
+			"cx": os.Getenv("PARTY_CX_WORKTREE"),
+		},
+	}
+
+	// Create Haiku client for autogen summaries
+	haikuClient, err := haiku.New(haiku.DefaultConfig())
+	if err != nil {
+		log.Printf("warning: failed to create haiku client: %v (autogen will use heuristic fallback)", err)
+		haikuClient = nil
+	}
+
+	// Create AutogenGenerator with Haiku client
+	autogenCfg := autogen.DefaultConfig()
+	autogenCfg.HaikuClient = haikuClient
+	gen := autogen.New(autogenCfg)
+
+	adminDaemon := admin.New(adminCfg, podCfg, logger, injector, gen)
 
 	// Create message router for admin-destined messages
 	messageRouter := admin.NewMessageRouter(adminDaemon, func(env *envelope.Envelope) error {

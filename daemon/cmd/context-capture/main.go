@@ -194,11 +194,12 @@ func loadConfig(path string) (*contextcapture.Config, error) {
 }
 
 func fetchCheckpoint(role string) (string, string, string) {
-	if _, err := exec.LookPath("bd"); err != nil {
+	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
+	if _, err := exec.LookPath(bdPath); err != nil {
 		return "", "", ""
 	}
 
-	listOut, err := exec.Command("bd", "list", "--type", "checkpoint", "--label", "role:"+role, "--limit", "1", "--json").Output()
+	listOut, err := exec.Command(bdPath, "list", "--type", "checkpoint", "--label", "role:"+role, "--limit", "1", "--json").Output()
 	if err != nil {
 		return "", "", ""
 	}
@@ -208,9 +209,9 @@ func fetchCheckpoint(role string) (string, string, string) {
 		return "", "", ""
 	}
 
-	body, _ := exec.Command("bd", "show", checkpointID, "--body").Output()
+	body, _ := exec.Command(bdPath, "show", checkpointID, "--body").Output()
 	if len(body) == 0 {
-		body, _ = exec.Command("bd", "show", checkpointID).Output()
+		body, _ = exec.Command(bdPath, "show", checkpointID).Output()
 	}
 
 	return checkpointID, strings.TrimSpace(string(body)), "beads"
@@ -218,11 +219,12 @@ func fetchCheckpoint(role string) (string, string, string) {
 
 // fetchLatestStateRollup retrieves the most recent state_rollup bead for a role.
 func fetchLatestStateRollup(role string) (string, error) {
-	if _, err := exec.LookPath("bd"); err != nil {
+	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
+	if _, err := exec.LookPath(bdPath); err != nil {
 		return "", err
 	}
 
-	listOut, err := exec.Command("bd", "list", "--type", "state_rollup", "--label", "role:"+role, "--limit", "1", "--json").Output()
+	listOut, err := exec.Command(bdPath, "list", "--type", "state_rollup", "--label", "role:"+role, "--limit", "1", "--json").Output()
 	if err != nil {
 		return "", err
 	}
@@ -232,7 +234,7 @@ func fetchLatestStateRollup(role string) (string, error) {
 		return "", nil
 	}
 
-	body, err := exec.Command("bd", "show", beadID, "--body").Output()
+	body, err := exec.Command(bdPath, "show", beadID, "--body").Output()
 	if err != nil {
 		return "", err
 	}
@@ -243,11 +245,12 @@ func fetchLatestStateRollup(role string) (string, error) {
 // fetchRecentChunkSummaries retrieves recent chunk_summary beads.
 // Returns the concatenated summaries and the end_offset of the most recent chunk.
 func fetchRecentChunkSummaries(role string, limit int) (string, int64) {
-	if _, err := exec.LookPath("bd"); err != nil {
+	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
+	if _, err := exec.LookPath(bdPath); err != nil {
 		return "", 0
 	}
 
-	listOut, err := exec.Command("bd", "list", "--type", "chunk_summary", "--label", "role:"+role, "--limit", fmt.Sprintf("%d", limit), "--json").Output()
+	listOut, err := exec.Command(bdPath, "list", "--type", "chunk_summary", "--label", "role:"+role, "--limit", fmt.Sprintf("%d", limit), "--json").Output()
 	if err != nil {
 		return "", 0
 	}
@@ -270,7 +273,7 @@ func fetchRecentChunkSummaries(role string, limit int) (string, int64) {
 			continue
 		}
 
-		body, err := exec.Command("bd", "show", beadID, "--body").Output()
+		body, err := exec.Command(bdPath, "show", beadID, "--body").Output()
 		if err != nil {
 			continue
 		}
