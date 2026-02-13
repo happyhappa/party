@@ -9,9 +9,6 @@ import (
 
 func TestDefaultAdminFields(t *testing.T) {
 	cfg := Default()
-	if cfg.AdminEnabled {
-		t.Error("AdminEnabled should default to false")
-	}
 	if cfg.CheckpointInterval != 10*time.Minute {
 		t.Errorf("CheckpointInterval = %v, want 10m", cfg.CheckpointInterval)
 	}
@@ -30,7 +27,6 @@ func TestDefaultAdminFields(t *testing.T) {
 }
 
 func TestLoadAdminEnvOverrides(t *testing.T) {
-	t.Setenv("RELAY_ADMIN_ENABLED", "true")
 	t.Setenv("RELAY_CHECKPOINT_INTERVAL", "15m")
 	t.Setenv("RELAY_HEALTH_CHECK_INTERVAL", "3m")
 	t.Setenv("RELAY_ADMIN_RECYCLE_AFTER_CYCLES", "10")
@@ -40,9 +36,6 @@ func TestLoadAdminEnvOverrides(t *testing.T) {
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
-	}
-	if !cfg.AdminEnabled {
-		t.Error("AdminEnabled should be true")
 	}
 	if cfg.CheckpointInterval != 15*time.Minute {
 		t.Errorf("CheckpointInterval = %v, want 15m", cfg.CheckpointInterval)

@@ -31,15 +31,7 @@ type Config struct {
 	PaneTailRotations int
 	PaneTailDir       string
 
-	// Admin checkpoint overrides (parsed from RELAY_CHECKPOINT_* env vars)
-	CheckpointIdleThreshold *time.Duration
-	CheckpointLogStable     *time.Duration
-	CheckpointMinInterval   *time.Duration
-	CheckpointCooldown      *time.Duration
-	CheckpointACKTimeout    *time.Duration
-
 	// Admin pane (Addendum A)
-	AdminEnabled         bool
 	CheckpointInterval   time.Duration
 	HealthCheckInterval  time.Duration
 	AdminRecycleCycles   int
@@ -75,7 +67,6 @@ func Default() *Config {
 		PaneTailDir:       filepath.Join(shareDir, "relay", "pane-tails"),
 
 		// Admin pane defaults
-		AdminEnabled:        false,
 		CheckpointInterval:  10 * time.Minute,
 		HealthCheckInterval: 5 * time.Minute,
 		AdminRecycleCycles:  6,
@@ -107,15 +98,7 @@ func Load() (*Config, error) {
 	cfg.PromptGating = envOr(cfg.PromptGating, "RELAY_PROMPT_GATING")
 	overrideDuration(&cfg.QueueMaxAge, "RELAY_QUEUE_MAX_AGE")
 
-	// Admin checkpoint env var overrides
-	cfg.CheckpointIdleThreshold = optionalDuration("RELAY_CHECKPOINT_IDLE_THRESHOLD")
-	cfg.CheckpointLogStable = optionalDuration("RELAY_CHECKPOINT_LOG_STABLE")
-	cfg.CheckpointMinInterval = optionalDuration("RELAY_CHECKPOINT_MIN_INTERVAL")
-	cfg.CheckpointCooldown = optionalDuration("RELAY_CHECKPOINT_COOLDOWN")
-	cfg.CheckpointACKTimeout = optionalDuration("RELAY_CHECKPOINT_ACK_TIMEOUT")
-
 	// Admin pane env var overrides
-	overrideBool(&cfg.AdminEnabled, "RELAY_ADMIN_ENABLED")
 	overrideDuration(&cfg.CheckpointInterval, "RELAY_CHECKPOINT_INTERVAL")
 	overrideDuration(&cfg.HealthCheckInterval, "RELAY_HEALTH_CHECK_INTERVAL")
 	overrideInt(&cfg.AdminRecycleCycles, "RELAY_ADMIN_RECYCLE_AFTER_CYCLES")
@@ -212,15 +195,6 @@ func overrideBool(dest *bool, key string) {
 			*dest = false
 		}
 	}
-}
-
-func optionalDuration(key string) *time.Duration {
-	if val := os.Getenv(key); val != "" {
-		if parsed, err := time.ParseDuration(val); err == nil {
-			return &parsed
-		}
-	}
-	return nil
 }
 
 func overrideInt(dest *int, key string) {
