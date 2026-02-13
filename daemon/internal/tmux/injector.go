@@ -204,6 +204,10 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 }
 
 func (i *Injector) shouldGate(target string) bool {
+	// Admin pane runs Claude, not a shell — never gate admin commands
+	if target == "admin" {
+		return false
+	}
 	switch i.promptGating {
 	case "none":
 		return false

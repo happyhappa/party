@@ -37,6 +37,17 @@ type Config struct {
 	CheckpointMinInterval   *time.Duration
 	CheckpointCooldown      *time.Duration
 	CheckpointACKTimeout    *time.Duration
+
+	// Admin pane (Addendum A)
+	AdminEnabled         bool
+	CheckpointInterval   time.Duration
+	HealthCheckInterval  time.Duration
+	AdminRecycleCycles   int
+	AdminMaxUptime       time.Duration
+	AdminAlertHook       string
+	AdminRelaunchCmd     string
+	PaneMapVersion       int
+	PaneMapRegisteredAt  string
 }
 
 // Default returns the default configuration.
@@ -62,6 +73,14 @@ func Default() *Config {
 		PaneTailLines:     150,
 		PaneTailRotations: 7,
 		PaneTailDir:       filepath.Join(shareDir, "relay", "pane-tails"),
+
+		// Admin pane defaults
+		AdminEnabled:        false,
+		CheckpointInterval:  10 * time.Minute,
+		HealthCheckInterval: 5 * time.Minute,
+		AdminRecycleCycles:  6,
+		AdminMaxUptime:      2 * time.Hour,
+		AdminRelaunchCmd:    "claude --dangerously-skip-permissions",
 	}
 }
 
@@ -95,26 +114,72 @@ func Load() (*Config, error) {
 	cfg.CheckpointCooldown = optionalDuration("RELAY_CHECKPOINT_COOLDOWN")
 	cfg.CheckpointACKTimeout = optionalDuration("RELAY_CHECKPOINT_ACK_TIMEOUT")
 
+	// Admin pane env var overrides
+	overrideBool(&cfg.AdminEnabled, "RELAY_ADMIN_ENABLED")
+	overrideDuration(&cfg.CheckpointInterval, "RELAY_CHECKPOINT_INTERVAL")
+	overrideDuration(&cfg.HealthCheckInterval, "RELAY_HEALTH_CHECK_INTERVAL")
+	overrideInt(&cfg.AdminRecycleCycles, "RELAY_ADMIN_RECYCLE_AFTER_CYCLES")
+	overrideDuration(&cfg.AdminMaxUptime, "RELAY_ADMIN_MAX_UPTIME")
+	overrideString(&cfg.AdminAlertHook, "RELAY_ADMIN_ALERT_HOOK")
+	overrideString(&cfg.AdminRelaunchCmd, "RELAY_ADMIN_RELAUNCH_CMD")
+
 	return cfg, nil
 }
 
+// paneMapV2 represents the new nested pane map format with metadata.
+type paneMapV2 struct {
+	Panes        map[string]string `json:"panes"`
+	Version      int               `json:"version"`
+	RegisteredAt string            `json:"registered_at"`
+}
+
 // LoadPaneMap loads pane targets from PaneMapPath into PaneTargets.
+// Supports both the new nested format (with "panes", "version", "registered_at")
+// and the old flat format ({"oc":"%0","cc":"%1","cx":"%2"}) for backward compat.
 func (c *Config) LoadPaneMap() error {
 	raw, err := os.ReadFile(c.PaneMapPath)
 	if err != nil {
 		return err
 	}
 
-	var paneMap map[string]string
-	if err := json.Unmarshal(raw, &paneMap); err != nil {
+	// Try new nested format first
+	var v2 paneMapV2
+	if err := json.Unmarshal(raw, &v2); err == nil && v2.Panes != nil {
+		c.PaneTargets = make(map[string]string, len(v2.Panes))
+		for key, val := range v2.Panes {
+			c.PaneTargets[strings.ToLower(key)] = val
+		}
+		c.PaneMapVersion = v2.Version
+		c.PaneMapRegisteredAt = v2.RegisteredAt
+		return nil
+	}
+
+	// Fall back to flat format
+	var flat map[string]string
+	if err := json.Unmarshal(raw, &flat); err != nil {
 		return fmt.Errorf("decode pane map: %w", err)
 	}
 
-	c.PaneTargets = make(map[string]string, len(paneMap))
-	for key, val := range paneMap {
+	c.PaneTargets = make(map[string]string, len(flat))
+	for key, val := range flat {
 		c.PaneTargets[strings.ToLower(key)] = val
 	}
+	c.PaneMapVersion = 0
+	c.PaneMapRegisteredAt = ""
 	return nil
+}
+
+// IsPaneMapStale returns true if the pane map's registered_at timestamp
+// is before lastRecycleTime, indicating stale pane mappings.
+func (c *Config) IsPaneMapStale(lastRecycleTime time.Time) bool {
+	if c.PaneMapRegisteredAt == "" {
+		return true
+	}
+	registered, err := time.Parse(time.RFC3339, c.PaneMapRegisteredAt)
+	if err != nil {
+		return true
+	}
+	return registered.Before(lastRecycleTime)
 }
 
 func envOr(current, key string) string {
