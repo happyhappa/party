@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 #
-# party-v2 - Creates 3-tier tmux layout for LLM orchestration
+# party-v2 - Creates 4-pane tmux layout for LLM orchestration
 #
-# Layout (right column: CC 40%, CX 40%, relay 20%):
+# Layout (OC 40% left, right column: CC top 50%, Admin bottom 50%):
 # ┌────────────┬────────────────────┐
-# │            │        CC (40%)    │
-# │     OC     ├────────────────────┤
-# │            │        CX (40%)    │
-# │            ├────────────────────┤
-# │            │   relay (20%)      │
+# │            │     CC (50%)       │
+# │  OC (40%) ├────────────────────┤
+# │            │   Admin (50%)     │
 # └────────────┴────────────────────┘
+# + hidden tmux window "cx" for CX agent
 #
 # Usage: party-v2 [session-name] [project-dir]
 #
@@ -18,8 +17,8 @@ set -euo pipefail
 
 SESSION="${1:-party}"
 PROJECT_DIR="${2:-$HOME/Sandbox/leaseupcre}"
-LLM_SHARE="$HOME/llm-share"
-RELAY_LOG="$LLM_SHARE/relay/log/events.jsonl"
+PROJECT_NAME="$(basename "$PROJECT_DIR")"
+PARTY_DIR="$HOME/party/$PROJECT_NAME"
 
 # Colors for status
 RED='\033[0;31m'
@@ -40,51 +39,102 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
     exec tmux attach -t "$SESSION"
 fi
 
-# Ensure relay log file exists for tail
-mkdir -p "$(dirname "$RELAY_LOG")"
-touch "$RELAY_LOG"
+# ── Locate admin skills source ─────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ADMIN_SKILLS_DIR="$SCRIPT_DIR/../admin-skills"
+if [[ ! -d "$ADMIN_SKILLS_DIR" ]]; then
+    err "Admin skills directory not found at $ADMIN_SKILLS_DIR"
+    exit 1
+fi
 
-log "Creating session '$SESSION' with 3-tier layout..."
+# ── Create per-pane directories ──────────────────────────────────────
+log "Creating per-pane directories under $PARTY_DIR ..."
+mkdir -p "$PARTY_DIR"/{oc,cc,cx}
+mkdir -p "$PARTY_DIR"/admin/{state,.claude/commands}
 
-# Create session with OC pane (left side)
+# ── Install admin skills and CLAUDE.md ───────────────────────────────
+log "Installing admin skills..."
+cp "$ADMIN_SKILLS_DIR"/*.md "$PARTY_DIR/admin/.claude/commands/" 2>/dev/null || true
+# Move CLAUDE.md to admin root (not commands dir)
+if [[ -f "$PARTY_DIR/admin/.claude/commands/CLAUDE.md" ]]; then
+    mv "$PARTY_DIR/admin/.claude/commands/CLAUDE.md" "$PARTY_DIR/admin/CLAUDE.md"
+fi
+
+# ── Build tmux layout ────────────────────────────────────────────────
+log "Creating session '$SESSION' with 4-pane layout..."
+
+# Create session with OC pane (left 40%)
 tmux new-session -d -s "$SESSION" -n main -c "$PROJECT_DIR"
 
-# Split right side (60% width for right column)
+# Split right column (60% width)
 tmux split-window -h -l 60% -t "$SESSION:main.0" -c "$PROJECT_DIR"
 
-# Split right column into 2 rows: CC (50%), CX (50%)
+# Split right column into CC (top 50%) and Admin (bottom 50%)
 tmux split-window -v -l 50% -t "$SESSION:main.1" -c "$PROJECT_DIR"
 
-# Name panes using select-pane -T (tmux 2.6+)
+# ── Hidden CX window ─────────────────────────────────────────────────
+# Create a new tmux window named "cx"; admin will launch CX later.
+tmux new-window -d -t "$SESSION" -n cx -c "$PROJECT_DIR"
+
+# ── Name panes ────────────────────────────────────────────────────────
 tmux select-pane -t "$SESSION:main.0" -T "OC"
 tmux select-pane -t "$SESSION:main.1" -T "CC"
-tmux select-pane -t "$SESSION:main.2" -T "CX"
+tmux select-pane -t "$SESSION:main.2" -T "Admin"
 
-# Set pane border format to show titles (tmux 2.6+)
+# ── Pane border labels (tmux 2.6+) ───────────────────────────────────
 tmux set-option -t "$SESSION" pane-border-status top
 tmux set-option -t "$SESSION" pane-border-format " #{pane_title} "
 
-# Select OC pane as default
+# ── Set AGENT_ROLE env var in OC and CC panes ────────────────────────
+tmux send-keys -t "$SESSION:main.0" "export AGENT_ROLE=oc" Enter
+tmux send-keys -t "$SESSION:main.1" "export AGENT_ROLE=cc" Enter
+
+# ── Launch Admin agent ────────────────────────────────────────────────
+tmux send-keys -t "$SESSION:main.2" \
+    "cd $PARTY_DIR/admin && export AGENT_ROLE=admin && export BEADS_DIR=$PARTY_DIR/oc/.beads && claude -c --dangerously-skip-permissions" Enter
+
+# ── Select OC pane as default focus ──────────────────────────────────
 tmux select-pane -t "$SESSION:main.0"
 
-log "Layout created. Pane IDs:"
-tmux list-panes -t "$SESSION:main" -F "  #{pane_index}: #{pane_title} (#{pane_id})"
+# ── Resolve pane IDs for panes.json ──────────────────────────────────
+OC_ID="$(tmux display -p -t "$SESSION:main.0" '#{pane_id}')"
+CC_ID="$(tmux display -p -t "$SESSION:main.1" '#{pane_id}')"
+ADMIN_ID="$(tmux display -p -t "$SESSION:main.2" '#{pane_id}')"
+CX_ID="$(tmux list-panes -t "$SESSION:cx" -F '#{pane_id}' | head -1)"
+REGISTERED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# Write pane map for relay daemon (title -> pane_id)
-PANE_MAP="$LLM_SHARE/relay/state/panes.json"
-log "Writing pane map to $PANE_MAP"
+log "Layout created. Pane IDs:"
+log "  OC:    $OC_ID"
+log "  CC:    $CC_ID"
+log "  Admin: $ADMIN_ID"
+log "  CX:    $CX_ID (hidden window)"
+
+# ── Write panes.json ─────────────────────────────────────────────────
+# Write to relay state dir (daemon reads from here) and admin state dir
+RELAY_PANE_MAP="$HOME/llm-share/relay/state/panes.json"
+ADMIN_PANE_MAP="$PARTY_DIR/admin/state/panes.json"
+mkdir -p "$(dirname "$RELAY_PANE_MAP")"
+log "Writing pane map to $RELAY_PANE_MAP and $ADMIN_PANE_MAP"
+cat > "$RELAY_PANE_MAP" <<EOF
 {
-    echo "{"
-    tmux list-panes -t "$SESSION:main" -F '"#{pane_title}": "#{pane_id}",' | sed '$ s/,$//'
-    echo "}"
-} > "$PANE_MAP"
+  "panes": {
+    "oc": "$OC_ID",
+    "cc": "$CC_ID",
+    "admin": "$ADMIN_ID",
+    "cx": "$CX_ID"
+  },
+  "version": 1,
+  "registered_at": "$REGISTERED_AT"
+}
+EOF
+cp "$RELAY_PANE_MAP" "$ADMIN_PANE_MAP"
 
 log ""
 log "To start agents manually:"
-log "  OC: claude -c --dangerously-skip-permissions"
-log "  CC: claude -c --dangerously-skip-permissions"
-log "  CX: codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share"
+log "  OC:  claude -c --dangerously-skip-permissions"
+log "  CC:  claude -c --dangerously-skip-permissions"
+log "  CX:  (admin will launch via the hidden 'cx' window)"
 log ""
 
-# Attach to session
+# ── Attach to session ────────────────────────────────────────────────
 exec tmux attach -t "$SESSION"
