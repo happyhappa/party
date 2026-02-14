@@ -120,28 +120,46 @@ relay-daemon
 
 ### Start Party Session
 ```bash
-party [session-name]
+party-v2 [session-name] [project-dir]
 ```
 
 Default session name is `party`. The script:
-1. Creates 3-pane tmux layout (OC | CC / CX)
-2. Sets `AGENT_ROLE` environment variable per pane
-3. Writes pane map to `~/llm-share/relay/state/panes.json`
-4. Launches agents with configured commands
+1. Creates 4-pane tmux layout: OC (40% left) | CC (top right 50%) / Admin (bottom right 50%) + hidden CX window
+2. Creates per-pane directories under `~/party/{project}/{oc,cc,admin,cx}/`
+3. Installs admin skills from `daemon/admin-skills/` into `admin/.claude/commands/`
+4. Sets `AGENT_ROLE` environment variable per pane (oc, cc, admin, cx)
+5. Writes pane map (v2 format) to `~/llm-share/relay/state/panes.json`
+6. Auto-launches Admin agent with `claude -c --dangerously-skip-permissions`
 
-### Custom Configuration
-Create `~/.config/relay/party.conf`:
-```bash
-# Working directories
-RELAY_OC_DIR="$HOME/projects"
-RELAY_CC_DIR="$HOME/current"
-RELAY_CX_DIR="$HOME/current"
-
-# Launch commands
-RELAY_OC_CMD="claude -c --dangerously-skip-permissions"
-RELAY_CC_CMD="claude --dangerously-skip-permissions"
-RELAY_CX_CMD="codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share"
+### Pane Layout
 ```
+┌────────────┬────────────────────┐
+│            │     CC (50%)       │
+│  OC (40%)  ├────────────────────┤
+│            │   Admin (50%)      │
+└────────────┴────────────────────┘
++ hidden tmux window "cx" for CX agent
+```
+
+### Admin Pane
+The Admin agent handles orchestration tasks injected by the relay daemon:
+- **`/checkpoint-cycle`** — Dispatches coordinated checkpoints to OC, CC, CX (every 10m)
+- **`/health-check`** — Heuristic health monitoring of all agent panes (every 5m)
+- **`/register-panes`** — Discovers and writes tmux pane map
+- **`/restart-cx`** — Restarts CX agent if detected dead
+- **`/status`** — Quick system status summary
+
+Admin is recycled by the relay daemon via Prestige (capture last-life.txt, /exit, relaunch) after a configurable number of cycles or max uptime.
+
+### Admin Environment Variables
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RELAY_CHECKPOINT_INTERVAL` | `10m` | Checkpoint cycle frequency |
+| `RELAY_HEALTH_CHECK_INTERVAL` | `5m` | Health check frequency |
+| `RELAY_ADMIN_RECYCLE_AFTER_CYCLES` | `6` | Recycle admin after N checkpoint cycles |
+| `RELAY_ADMIN_MAX_UPTIME` | `2h` | Max admin uptime before forced recycle |
+| `RELAY_ADMIN_ALERT_HOOK` | (empty) | Shell command to invoke on anomaly |
+| `RELAY_ADMIN_RELAUNCH_CMD` | `claude --dangerously-skip-permissions` | Command to relaunch admin after recycle |
 
 ---
 
@@ -173,7 +191,7 @@ cat ~/llm-share/relay/outbox/oc/*.msg
 In each agent pane:
 ```bash
 echo $AGENT_ROLE
-# Should output: oc, cc, or cx
+# Should output: oc, cc, admin, or cx
 ```
 
 ### Check Event Log
@@ -233,11 +251,18 @@ tmux display-message -p -t %0 '#{@role}'  # Should show: oc
 ### Stale Pane Mapping
 If tmux session was recreated without updating panes.json:
 ```bash
-# Regenerate pane map
+# In the admin pane, run:
+/register-panes
+
+# Or manually regenerate:
 OC_PANE=$(tmux display-message -p -t party:main.0 '#{pane_id}')
 CC_PANE=$(tmux display-message -p -t party:main.1 '#{pane_id}')
-CX_PANE=$(tmux display-message -p -t party:main.2 '#{pane_id}')
-printf '{"oc":"%s","cc":"%s","cx":"%s"}\n' "$OC_PANE" "$CC_PANE" "$CX_PANE" > ~/llm-share/relay/state/panes.json
+ADMIN_PANE=$(tmux display-message -p -t party:main.2 '#{pane_id}')
+CX_PANE=$(tmux list-panes -t party:cx -F '#{pane_id}' | head -1)
+
+jq -n --arg oc "$OC_PANE" --arg cc "$CC_PANE" --arg admin "$ADMIN_PANE" --arg cx "$CX_PANE" \
+  '{"panes":{"oc":$oc,"cc":$cc,"admin":$admin,"cx":$cx},"version":1,"registered_at":now|strftime("%Y-%m-%dT%H:%M:%SZ")}' \
+  > ~/llm-share/relay/state/panes.json
 
 # Restart daemon
 systemctl --user restart relay-daemon
@@ -246,11 +271,18 @@ systemctl --user restart relay-daemon
 ### Permission Errors
 ```bash
 # Fix outbox permissions
-chmod 755 ~/llm-share/relay/outbox/{oc,cc,cx}
+chmod 755 ~/llm-share/relay/outbox/{oc,cc,cx,admin}
 
 # Fix state file permissions
 chmod 644 ~/llm-share/relay/state/*.json
 ```
+
+### Admin Not Receiving Skills
+If admin pane doesn't respond to `/checkpoint-cycle` or `/health-check`:
+1. Check admin skills are installed: `ls ~/party/{project}/admin/.claude/commands/`
+2. Check relay daemon is routing to admin: `journalctl --user -u relay-daemon | grep admin`
+3. Verify panes.json has admin pane: `jq .panes.admin ~/llm-share/relay/state/panes.json`
+4. Re-register panes if needed: run `/register-panes` in admin pane
 
 ---
 
@@ -258,9 +290,11 @@ chmod 644 ~/llm-share/relay/state/*.json
 
 | Command | Description |
 |---------|-------------|
-| `party` | Start/attach to party session |
-| `relay send <to> "msg"` | Send message to agent |
+| `party-v2 [session] [project-dir]` | Start/attach to party session (4-pane layout) |
+| `relay send <to> "msg"` | Send message to agent (oc, cc, cx, admin, all) |
 | `systemctl --user start relay-daemon` | Start daemon |
 | `systemctl --user status relay-daemon` | Check daemon status |
 | `journalctl --user -u relay-daemon -f` | Follow daemon logs |
-| `cat ~/llm-share/relay/state/panes.json` | View pane mapping |
+| `jq . ~/llm-share/relay/state/panes.json` | View pane mapping (v2 format) |
+| `/status` (in admin pane) | Quick system health summary |
+| `/register-panes` (in admin pane) | Re-discover and write pane map |

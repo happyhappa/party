@@ -27,6 +27,9 @@
 - **Manual commands:** BOTH legacy and new coexist
 - **Storage:** Beads SQLite + JSONL + Git
 - **Recovery:** 3-tier (checkpoint → tail → autogen)
+- **Admin pane:** Dedicated Claude Code pane for orchestration (Addendum A)
+- **Relay daemon:** Dumb router + timers, injects skills to admin pane
+- **Prestige recycling:** Admin context refreshed after N cycles or max uptime
 
 ---
 
@@ -111,6 +114,12 @@ If critical issues found:
 - [ ] Deploy summary watcher
 - [ ] Deprecate legacy commands
 - [ ] Full E2E test suite
+
+### Addendum A: Admin Pane Architecture
+- [x] Phase 1: Admin pane MVP (config, timer, recycler, skills, party-v2)
+- [x] Phase 2: Polish (staleness checks, structured logging, CX auto-recovery, integration tests)
+- [x] Phase 3: Legacy removal (delete admin package, sessionmap, autogen; admin pane is sole path)
+- [ ] E2E test: Full 4-pane startup with live daemon
 
 ### Long Term
 - [ ] Performance optimization
