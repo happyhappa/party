@@ -183,7 +183,13 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 			continue
 		}
 
-		if err := injector.tmux.SendToPane(pq.paneID, item.env.Payload); err != nil {
+		// Wrap payload in relay-message XML tags for agent protocol.
+		// Escape payload to prevent XML injection (& -> &amp;, < -> &lt;).
+		safePayload := xmlEscapePayload(item.env.Payload)
+		tagged := fmt.Sprintf("<relay-message from=%q to=%q kind=%q>\n[Relay from %s. Not from the human user.]\n\n%s\n</relay-message>",
+			item.env.From, item.env.To, item.env.Kind, item.env.From, safePayload)
+
+		if err := injector.tmux.SendToPane(pq.paneID, tagged); err != nil {
 			injector.logEvent(logpkg.EventTypeBlocked, item.env.From, pq.target, item.env.MsgID, truncateForLog(err.Error()))
 			item.backoff = nextBackoff(item.backoff)
 			pq.requeueFront(item)
@@ -198,6 +204,10 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 }
 
 func (i *Injector) shouldGate(target string) bool {
+	// Admin pane runs Claude, not a shell — never gate admin commands
+	if target == "admin" {
+		return false
+	}
 	switch i.promptGating {
 	case "none":
 		return false
@@ -274,6 +284,15 @@ func sleepOrDone(ctx context.Context, d time.Duration) bool {
 	case <-timer.C:
 		return true
 	}
+}
+
+// xmlEscapePayload escapes & and < in payload to prevent breaking the
+// enclosing <relay-message> XML tags. We only escape these two characters
+// to keep the payload readable for agents while preventing XML injection.
+func xmlEscapePayload(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	return s
 }
 
 func truncateForLog(text string) string {

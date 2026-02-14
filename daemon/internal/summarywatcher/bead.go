@@ -2,7 +2,6 @@ package summarywatcher
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -42,8 +41,7 @@ func (w *Watcher) writeChunkSummaryBead(summary string, meta ChunkMeta) error {
 		"--body", summary,
 	}
 
-	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
-	cmd := exec.Command(bdPath, args...)
+	cmd := exec.Command("bd", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("bd create chunk_summary: %w: %s", err, string(output))
@@ -83,8 +81,7 @@ func (w *Watcher) writeStateRollupBead(rollup string, meta RollupMeta) error {
 		"--body", rollup,
 	}
 
-	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
-	cmd := exec.Command(bdPath, args...)
+	cmd := exec.Command("bd", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("bd create state_rollup: %w: %s", err, string(output))
@@ -104,8 +101,7 @@ func (w *Watcher) getLatestChunkSummaries(count int) ([]string, error) {
 		"--format", "body",
 	}
 
-	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
-	cmd := exec.Command(bdPath, args...)
+	cmd := exec.Command("bd", args...)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("bd query: %w", err)

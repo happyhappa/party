@@ -6,19 +6,17 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
-	"github.com/norm/relay-daemon/internal/admin"
-	"github.com/norm/relay-daemon/internal/autogen"
+	"github.com/norm/relay-daemon/internal/adminpane"
 	cfgpkg "github.com/norm/relay-daemon/internal/config"
-	"github.com/norm/relay-daemon/internal/haiku"
 	inbox "github.com/norm/relay-daemon/internal/inbox"
 	logpkg "github.com/norm/relay-daemon/internal/log"
 	"github.com/norm/relay-daemon/internal/state"
 	"github.com/norm/relay-daemon/internal/supervisor"
 	tmuxpkg "github.com/norm/relay-daemon/internal/tmux"
-	"github.com/norm/relay-daemon/pkg/envelope"
 )
 
 func main() {
@@ -62,40 +60,18 @@ func main() {
 		watcher.SetOffsets(offsets)
 	}
 
-	// Initialize admin daemon for checkpoint coordination
-	adminCfg := admin.DefaultConfig()
-	adminCfg.StateDir = cfg.StateDir
+	// Admin pane (Addendum A)
+	var adminTimer *adminpane.AdminTimer
+	if adminPaneID, ok := cfg.PaneTargets["admin"]; ok {
+		log.Printf("admin pane enabled (pane %s)", adminPaneID)
+		adminTimer = adminpane.NewAdminTimer(injector, cfg, logger)
 
-	// Create PodConfig for session log discovery
-	// Worktree paths loaded from environment (set by ~/.party/env.sh)
-	podCfg := &admin.PodConfig{
-		PodName: "party",
-		Panes:   cfg.PaneTargets,
-		Worktrees: map[string]string{
-			"oc": os.Getenv("PARTY_OC_WORKTREE"),
-			"cc": os.Getenv("PARTY_CC_WORKTREE"),
-			"cx": os.Getenv("PARTY_CX_WORKTREE"),
-		},
+		adminDir := filepath.Join(filepath.Dir(cfg.StateDir), "admin")
+		recycler := adminpane.NewRecycler(mux, cfg, logger, adminPaneID, adminDir)
+		adminTimer.SetRecycler(recycler)
+	} else {
+		log.Printf("warning: no 'admin' in pane map; admin timer disabled")
 	}
-
-	// Create Haiku client for autogen summaries
-	haikuClient, err := haiku.New(haiku.DefaultConfig())
-	if err != nil {
-		log.Printf("warning: failed to create haiku client: %v (autogen will use heuristic fallback)", err)
-		haikuClient = nil
-	}
-
-	// Create AutogenGenerator with Haiku client
-	autogenCfg := autogen.DefaultConfig()
-	autogenCfg.HaikuClient = haikuClient
-	gen := autogen.New(autogenCfg)
-
-	adminDaemon := admin.New(adminCfg, podCfg, logger, injector, gen)
-
-	// Create message router for admin-destined messages
-	messageRouter := admin.NewMessageRouter(adminDaemon, func(env *envelope.Envelope) error {
-		return injector.Inject(env)
-	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -120,11 +96,9 @@ func main() {
 			errCh <- err
 		}
 	}()
-	go func() {
-		if err := adminDaemon.Start(ctx); err != nil {
-			log.Printf("admin daemon: %v", err)
-		}
-	}()
+	if adminTimer != nil {
+		go adminTimer.Start(ctx)
+	}
 	if paneTailer != nil {
 		go paneTailer.Start(ctx)
 	}
@@ -151,12 +125,13 @@ func main() {
 			}
 			_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeReceived, env.From, env.To).WithMsgID(env.MsgID))
 
-			// Record relay activity for checkpoint timing
-			adminDaemon.RecordRelayActivity()
-
-			// Handle broadcast to all agents
+			// Handle broadcast to all agents (including admin if present)
 			if env.To == "all" {
-				for _, target := range []string{"oc", "cc", "cx"} {
+				broadcastTargets := []string{"oc", "cc", "cx"}
+				if _, ok := cfg.PaneTargets["admin"]; ok {
+					broadcastTargets = append(broadcastTargets, "admin")
+				}
+				for _, target := range broadcastTargets {
 					cloned := *env
 					cloned.To = target
 					if err := injector.Inject(&cloned); err != nil {
@@ -167,15 +142,21 @@ func main() {
 				continue
 			}
 
-			// Route message (admin-destined messages handled internally)
-			handled, err := messageRouter.Route(env)
-			if err != nil {
-				_ = logger.Log(logpkg.NewEvent("error", env.From, env.To).WithMsgID(env.MsgID).WithError(err.Error()))
+			// Admin-destined messages: ACK tracking + forward to pane
+			if env.To == "admin" {
+				if adminTimer != nil && strings.HasPrefix(strings.TrimSpace(env.Payload), "ACK ") {
+					adminTimer.RecordACK()
+					_ = logger.Log(logpkg.NewEvent("admin_ack_received", env.From, "admin").WithMsgID(env.MsgID))
+				}
+				if err := injector.Inject(env); err != nil {
+					_ = logger.Log(logpkg.NewEvent("error", env.From, "admin").WithMsgID(env.MsgID).WithError(err.Error()))
+				}
 				continue
 			}
-			if handled {
-				// Message was handled by admin, already logged
-				continue
+
+			// Standard message routing via injector
+			if err := injector.Inject(env); err != nil {
+				_ = logger.Log(logpkg.NewEvent("error", env.From, env.To).WithMsgID(env.MsgID).WithError(err.Error()))
 			}
 		}
 	}

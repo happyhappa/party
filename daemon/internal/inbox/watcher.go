@@ -34,10 +34,11 @@ func NewWatcher(inboxDir string) (*Watcher, error) {
 		events:   make(chan *envelope.Envelope, 1024),
 		offsets:  make(map[string]int64),
 		valid: map[string]struct{}{
-			"oc":  {},
-			"cc":  {},
-			"cx":  {},
-			"vog": {},
+			"oc":    {},
+			"cc":    {},
+			"cx":    {},
+			"admin": {},
+			"vog":   {},
 		},
 	}, nil
 }
