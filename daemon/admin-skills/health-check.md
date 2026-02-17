@@ -88,17 +88,7 @@ echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-anomal
 
 Do NOT auto-recover OC or CC — only log warnings for those and include in the ACK. OC/CC recovery requires human judgment.
 
-### 7. Send ACK
-
-Determine overall status: `healthy` if no anomalies, `anomaly_detected` otherwise. Build a brief summary.
-
-```bash
-STATUS="healthy"  # or "anomaly_detected"
-DETAIL="all agents responsive"  # or "cx: process dead, restart triggered"
-relay send oc "ACK health-check complete. Status: ${STATUS}. Details: ${DETAIL}"
-```
-
-### 8. Log completion
+### 7. Log completion
 
 ```bash
 echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-check\",\"results\":{\"oc\":\"$OC_STATUS\",\"cc\":\"$CC_STATUS\",\"cx\":\"$CX_STATUS\"},\"status\":\"complete\"}" >> "$PWD/state/checkpoints.log"
@@ -109,6 +99,6 @@ echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-check\
 - Minimize context usage -- this skill runs frequently (every few minutes).
 - Do NOT include captured pane output in your response. Only include the diagnosis.
 - Heuristic checks first; LLM-based assessment is Phase 2 (not yet implemented).
-- Do NOT send messages to any agent other than OC (via the ACK in step 7).
-- Return silently after sending the ACK. No follow-up output.
+- Do NOT send relay messages to any agent. All output stays local (JSONL log only).
+- Return silently after logging. No follow-up output.
 - Keep total output under 5 lines.

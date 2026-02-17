@@ -33,6 +33,20 @@ err() {
     echo -e "${RED}[party-v2]${NC} $1" >&2
 }
 
+# Per-agent working directories (worktree subdirectories of PROJECT_DIR)
+OC_DIR="$PROJECT_DIR/oc-wt"
+CC_DIR="$PROJECT_DIR/cc-wt"
+CX_DIR="$PROJECT_DIR/cx-wt"
+ADMIN_DIR="$PARTY_DIR/admin"
+
+# Verify worktrees exist
+for dir in "$OC_DIR" "$CC_DIR" "$CX_DIR"; do
+    if [[ ! -d "$dir" ]]; then
+        err "Worktree directory not found: $dir"
+        exit 1
+    fi
+done
+
 # Check if session already exists
 if tmux has-session -t "$SESSION" 2>/dev/null; then
     log "Session '$SESSION' already exists. Attaching..."
@@ -40,7 +54,7 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
 fi
 
 # ── Locate admin skills source ─────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 ADMIN_SKILLS_DIR="$SCRIPT_DIR/../admin-skills"
 if [[ ! -d "$ADMIN_SKILLS_DIR" ]]; then
     err "Admin skills directory not found at $ADMIN_SKILLS_DIR"
@@ -64,17 +78,17 @@ fi
 log "Creating session '$SESSION' with 4-pane layout..."
 
 # Create session with OC pane (left 40%)
-tmux new-session -d -s "$SESSION" -n main -c "$PROJECT_DIR"
+tmux new-session -d -s "$SESSION" -n main -c "$OC_DIR"
 
 # Split right column (60% width)
-tmux split-window -h -l 60% -t "$SESSION:main.0" -c "$PROJECT_DIR"
+tmux split-window -h -l 60% -t "$SESSION:main.0" -c "$CC_DIR"
 
 # Split right column into CC (top 50%) and Admin (bottom 50%)
-tmux split-window -v -l 50% -t "$SESSION:main.1" -c "$PROJECT_DIR"
+tmux split-window -v -l 50% -t "$SESSION:main.1" -c "$ADMIN_DIR"
 
 # ── Hidden CX window ─────────────────────────────────────────────────
 # Create a new tmux window named "cx"; admin will launch CX later.
-tmux new-window -d -t "$SESSION" -n cx -c "$PROJECT_DIR"
+tmux new-window -d -t "$SESSION" -n cx -c "$CX_DIR"
 
 # ── Name panes ────────────────────────────────────────────────────────
 tmux select-pane -t "$SESSION:main.0" -T "OC"
@@ -85,13 +99,16 @@ tmux select-pane -t "$SESSION:main.2" -T "Admin"
 tmux set-option -t "$SESSION" pane-border-status top
 tmux set-option -t "$SESSION" pane-border-format " #{pane_title} "
 
-# ── Set AGENT_ROLE env var in OC and CC panes ────────────────────────
-tmux send-keys -t "$SESSION:main.0" "export AGENT_ROLE=oc" Enter
-tmux send-keys -t "$SESSION:main.1" "export AGENT_ROLE=cc" Enter
+# ── Launch agents ─────────────────────────────────────────────────────
+# OC/CC: continue previous session, fall back to fresh if none exists
+CLAUDE_CMD='claude -c --dangerously-skip-permissions || claude --dangerously-skip-permissions'
+# Admin: always fresh, limited toolset (stateless, behavior driven by skills + CLAUDE.md)
+ADMIN_CMD='claude --tools "Bash,Read,Glob" --permission-mode bypassPermissions'
 
-# ── Launch Admin agent ────────────────────────────────────────────────
+tmux send-keys -t "$SESSION:main.0" "export AGENT_ROLE=oc && ($CLAUDE_CMD)" Enter
+tmux send-keys -t "$SESSION:main.1" "export AGENT_ROLE=cc && ($CLAUDE_CMD)" Enter
 tmux send-keys -t "$SESSION:main.2" \
-    "cd $PARTY_DIR/admin && export AGENT_ROLE=admin && export BEADS_DIR=$PARTY_DIR/oc/.beads && claude -c --dangerously-skip-permissions" Enter
+    "export AGENT_ROLE=admin && export BEADS_DIR=$PARTY_DIR/oc/.beads && $ADMIN_CMD" Enter
 
 # ── Select OC pane as default focus ──────────────────────────────────
 tmux select-pane -t "$SESSION:main.0"
@@ -130,11 +147,23 @@ EOF
 cp "$RELAY_PANE_MAP" "$ADMIN_PANE_MAP"
 
 log ""
-log "To start agents manually:"
-log "  OC:  claude -c --dangerously-skip-permissions"
-log "  CC:  claude -c --dangerously-skip-permissions"
-log "  CX:  (admin will launch via the hidden 'cx' window)"
+log "Agents launched:"
+log "  OC:    $OC_DIR"
+log "  CC:    $CC_DIR"
+log "  Admin: $ADMIN_DIR"
+log "  CX:    $CX_DIR (hidden window, admin launches)"
 log ""
+
+# ── Restart relay daemon to pick up new panes.json ───────────────────
+if systemctl --user is-active relay-daemon &>/dev/null; then
+    log "Restarting relay daemon to load new pane map..."
+    systemctl --user restart relay-daemon
+elif systemctl --user is-enabled relay-daemon &>/dev/null; then
+    log "Starting relay daemon..."
+    systemctl --user start relay-daemon
+else
+    log "Warning: relay-daemon service not found. Start it manually."
+fi
 
 # ── Attach to session ────────────────────────────────────────────────
 exec tmux attach -t "$SESSION"
