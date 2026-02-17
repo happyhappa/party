@@ -36,15 +36,7 @@ Append a JSONL entry to the admin state directory:
 echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"checkpoint-cycle\",\"cycle_id\":\"$CHK_ID\",\"dispatched_to\":[\"oc\",\"cc\",\"cx\"],\"status\":\"dispatched\"}" >> "$PWD/state/checkpoints.log"
 ```
 
-### 5. Send ACK
-
-Notify OC that the checkpoint cycle has been dispatched. The daemon's deadman monitor detects ACKs from admin via outbound relay messages.
-
-```bash
-relay send oc "ACK checkpoint-cycle $CHK_ID dispatched to oc, cc, cx"
-```
-
-### 6. Return silently
+### 5. Return silently
 
 Output a single confirmation line, then stop. Do not produce further output.
 
@@ -54,7 +46,7 @@ Checkpoint cycle $CHK_ID dispatched.
 
 ## Rules
 
-- Do NOT send status messages beyond the single ACK in step 5.
+- Do NOT send any relay messages other than the checkpoint dispatches in step 3.
 - Do NOT wait for agent responses -- this is fire-and-forget dispatch.
 - If a `relay send` command fails for one agent, continue dispatching to the remaining agents. Note the failure in the JSONL log entry by adjusting the `dispatched_to` array.
 - Return to idle immediately after completion.

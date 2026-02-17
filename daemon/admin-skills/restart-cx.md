@@ -10,7 +10,6 @@ echo "CX pane: $CX_PANE"
 # Guard: abort if CX pane is not registered
 if [[ -z "$CX_PANE" || "$CX_PANE" == "null" ]]; then
   echo "ERROR: CX pane not registered. Run /register-panes first."
-  relay send oc "ACK restart-cx FAILED: CX pane not registered"
   exit 1
 fi
 ```
@@ -77,15 +76,10 @@ mkdir -p "$PWD/state"
 echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"restart-cx\",\"pane\":\"$CX_PANE\",\"status\":\"relaunched\"}" >> "$PWD/state/checkpoints.log"
 ```
 
-### 7. Notify OC
-Send a notification so OC knows CX has been restarted:
-```bash
-relay send oc "CX restarted in pane $CX_PANE"
-```
-
 ## Rules
 
 - Wait for a clean exit before relaunching (poll for shell prompt)
 - If prompt doesn't appear after 10s, send another C-c and try again (one retry only)
 - Log all actions to checkpoints.log
-- Return silently after the notification -- do not elaborate or send additional messages
+- Do NOT send relay messages to any agent. All output stays local (JSONL log only).
+- Return silently after logging -- do not elaborate or send additional messages
