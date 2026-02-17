@@ -31,20 +31,20 @@ func TestAllowedCommands(t *testing.T) {
 	}
 }
 
-func TestRecordACK(t *testing.T) {
+func TestRecordInjectTime(t *testing.T) {
 	cfg := config.Default()
 	timer := NewAdminTimer(noopInjector(), cfg, nil)
 
-	before := timer.lastACKTime
+	before := timer.lastInjectTime
 	time.Sleep(10 * time.Millisecond)
-	timer.RecordACK()
+	timer.recordInjectTime()
 
 	timer.mu.Lock()
-	after := timer.lastACKTime
+	after := timer.lastInjectTime
 	timer.mu.Unlock()
 
 	if !after.After(before) {
-		t.Error("RecordACK should update lastACKTime")
+		t.Error("recordInjectTime should update lastInjectTime")
 	}
 }
 

@@ -169,6 +169,21 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 
 		injector.logEvent(logpkg.EventTypeDequeue, item.env.From, pq.target, item.env.MsgID, "")
 
+		// Slash commands are injected bare so Claude Code parses them as skill invocations
+		if strings.HasPrefix(strings.TrimSpace(item.env.Payload), "/") {
+			if err := injector.tmux.SendToPane(pq.paneID, strings.TrimSpace(item.env.Payload)); err != nil {
+				injector.logEvent(logpkg.EventTypeBlocked, item.env.From, pq.target, item.env.MsgID, truncateForLog(err.Error()))
+				item.backoff = nextBackoff(item.backoff)
+				pq.requeueFront(item)
+				if !sleepOrDone(ctx, item.backoff) {
+					return
+				}
+				continue
+			}
+			injector.logEvent(logpkg.EventTypeInject, item.env.From, pq.target, item.env.MsgID, "")
+			continue
+		}
+
 		ready, tail, err := injector.IsPaneReady(pq.paneID, pq.target)
 		if err != nil || !ready {
 			if tail == "" && err != nil {

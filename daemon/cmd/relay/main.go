@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -142,12 +141,8 @@ func main() {
 				continue
 			}
 
-			// Admin-destined messages: ACK tracking + forward to pane
+			// Admin-destined messages: forward to pane
 			if env.To == "admin" {
-				if adminTimer != nil && strings.HasPrefix(strings.TrimSpace(env.Payload), "ACK ") {
-					adminTimer.RecordACK()
-					_ = logger.Log(logpkg.NewEvent("admin_ack_received", env.From, "admin").WithMsgID(env.MsgID))
-				}
 				if err := injector.Inject(env); err != nil {
 					_ = logger.Log(logpkg.NewEvent("error", env.From, "admin").WithMsgID(env.MsgID).WithError(err.Error()))
 				}
