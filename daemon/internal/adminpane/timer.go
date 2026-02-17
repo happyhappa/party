@@ -30,7 +30,7 @@ type AdminTimer struct {
 
 	mu               sync.Mutex
 	checkpointCycles int
-	lastACKTime      time.Time
+	lastInjectTime      time.Time
 	startTime        time.Time
 	lastRecycleTime  time.Time
 	paneMapRefreshed bool
@@ -46,7 +46,7 @@ func NewAdminTimer(injector *tmux.Injector, cfg *config.Config, logger *logpkg.E
 		injector:        injector,
 		cfg:             cfg,
 		logger:          logger,
-		lastACKTime:     now,
+		lastInjectTime:     now,
 		startTime:       now,
 		lastRecycleTime: now,
 	}
@@ -78,11 +78,11 @@ func (t *AdminTimer) Start(ctx context.Context) {
 	wg.Wait()
 }
 
-// RecordACK updates lastACKTime under lock.
-func (t *AdminTimer) RecordACK() {
+// recordInjectTime updates lastInjectTime under lock after a successful injection.
+func (t *AdminTimer) recordInjectTime() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.lastACKTime = time.Now()
+	t.lastInjectTime = time.Now()
 }
 
 // CheckpointCycles returns the current checkpoint cycle count.
@@ -130,7 +130,7 @@ func (t *AdminTimer) runCheckpointTicker(ctx context.Context) {
 					t.mu.Lock()
 					t.checkpointCycles = 0
 					t.startTime = now
-					t.lastACKTime = now
+					t.lastInjectTime = now
 					t.lastRecycleTime = now
 					t.paneMapRefreshed = false
 					t.mu.Unlock()
@@ -208,12 +208,13 @@ func (t *AdminTimer) injectCommand(cmd string) {
 		t.logEvent("admin_inject_error", cmd+": "+err.Error())
 		return
 	}
+	t.recordInjectTime()
 	t.logEvent("admin_inject", cmd)
 }
 
 func (t *AdminTimer) checkDeadman() {
 	t.mu.Lock()
-	elapsed := time.Since(t.lastACKTime)
+	elapsed := time.Since(t.lastInjectTime)
 	threshold := 2 * t.cfg.HealthCheckInterval
 	alertHook := t.cfg.AdminAlertHook
 	t.mu.Unlock()
@@ -222,7 +223,7 @@ func (t *AdminTimer) checkDeadman() {
 		return
 	}
 
-	msg := "admin pane unresponsive: no ACK in " + elapsed.Truncate(time.Second).String()
+	msg := "admin pane unresponsive: no activity since last inject " + elapsed.Truncate(time.Second).String() + " ago"
 	log.Printf("CRITICAL: %s", msg)
 	t.logEvent("admin_deadman", msg)
 
