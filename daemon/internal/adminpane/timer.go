@@ -131,8 +131,7 @@ func (t *AdminTimer) runCheckpointTicker(ctx context.Context) {
 				continue
 			}
 
-			t.injectCommand("/checkpoint-cycle")
-			if idle != nil {
+			if t.injectCommand("/checkpoint-cycle") && idle != nil {
 				idle.RecordCheckpointInjection()
 			}
 
@@ -254,21 +253,22 @@ func (t *AdminTimer) refreshPaneMapIfStale() {
 	t.logEvent("admin_pane_map_refreshed", "")
 }
 
-func (t *AdminTimer) injectCommand(cmd string) {
+func (t *AdminTimer) injectCommand(cmd string) bool {
 	if !allowedCommands[cmd] {
 		log.Printf("admin timer: rejected non-allowlisted command %q", cmd)
 		t.logEvent("admin_command_rejected", cmd)
-		return
+		return false
 	}
 
 	env := envelope.NewEnvelope("relay", "admin", "command", cmd)
 	if err := t.injector.Inject(env); err != nil {
 		log.Printf("admin timer: inject %s failed: %v", cmd, err)
 		t.logEvent("admin_inject_error", cmd+": "+err.Error())
-		return
+		return false
 	}
 	t.recordInjectTime()
 	t.logEvent("admin_inject", cmd)
+	return true
 }
 
 func (t *AdminTimer) checkDeadman() {

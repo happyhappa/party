@@ -14,6 +14,7 @@ type IdleDetector struct {
 	lastCheckpointInjectionTime time.Time
 	projectDirs                 map[string]string // role → project dir
 	backstopInterval            time.Duration
+	hasInjected                 bool
 }
 
 // NewIdleDetector creates an IdleDetector with the given project directories
@@ -31,6 +32,7 @@ func (d *IdleDetector) RecordCheckpointInjection() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.lastCheckpointInjectionTime = time.Now()
+	d.hasInjected = true
 }
 
 // AllAgentsIdle returns true if all configured agents' most recent JSONL file
@@ -40,9 +42,10 @@ func (d *IdleDetector) AllAgentsIdle() bool {
 	d.mu.Lock()
 	dirs := d.projectDirs
 	lastInjection := d.lastCheckpointInjectionTime
+	injected := d.hasInjected
 	d.mu.Unlock()
 
-	if len(dirs) == 0 {
+	if len(dirs) == 0 || !injected {
 		return false
 	}
 

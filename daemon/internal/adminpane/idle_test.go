@@ -87,6 +87,27 @@ func TestAllAgentsIdle_MultipleJSONL_PicksLatest(t *testing.T) {
 	}
 }
 
+func TestAllAgentsIdle_BeforeFirstInjection(t *testing.T) {
+	dir := t.TempDir()
+	// Create a JSONL file with old mtime
+	f := filepath.Join(dir, "session.jsonl")
+	os.WriteFile(f, []byte("{}"), 0644)
+	past := time.Now().Add(-1 * time.Hour)
+	os.Chtimes(f, past, past)
+
+	d := NewIdleDetector(map[string]string{"oc": dir}, 2*time.Hour)
+	// Do NOT call RecordCheckpointInjection — simulating startup
+	if d.AllAgentsIdle() {
+		t.Fatal("expected not idle before first successful injection")
+	}
+
+	// After first injection, should now detect idle
+	d.RecordCheckpointInjection()
+	if !d.AllAgentsIdle() {
+		t.Fatal("expected idle after first injection with old JSONL")
+	}
+}
+
 func TestShouldBackstop(t *testing.T) {
 	d := NewIdleDetector(map[string]string{}, 100*time.Millisecond)
 	if d.ShouldBackstop() {

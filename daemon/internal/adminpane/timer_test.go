@@ -60,6 +60,25 @@ func TestCheckpointCycleIncrement(t *testing.T) {
 	}
 }
 
+func TestInjectCommandReturnsFalseOnFailure(t *testing.T) {
+	cfg := config.Default()
+	// noopInjector has no "admin" target, so Inject will fail
+	timer := NewAdminTimer(noopInjector(), cfg, nil)
+
+	if timer.injectCommand("/checkpoint-cycle") {
+		t.Error("injectCommand should return false when inject fails (no admin target)")
+	}
+}
+
+func TestInjectCommandReturnsFalseOnRejected(t *testing.T) {
+	cfg := config.Default()
+	timer := NewAdminTimer(noopInjector(), cfg, nil)
+
+	if timer.injectCommand("/not-allowed") {
+		t.Error("injectCommand should return false for non-allowlisted command")
+	}
+}
+
 func TestStartCancellation(t *testing.T) {
 	cfg := config.Default()
 	cfg.CheckpointInterval = 100 * time.Millisecond
