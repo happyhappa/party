@@ -1,8 +1,8 @@
 # RFC-002: Context Capture and Recovery - Deployment Status
 
 **Status:** ✅ OPERATIONAL (Beta)
-**Date:** 2026-02-04
-**Commit:** 1547dfd
+**Date:** 2026-02-04 (last updated 2026-02-18)
+**Commit:** 1547dfd (initial), 8953b3c (current)
 
 ---
 
@@ -78,6 +78,8 @@ If critical issues found:
 - ⚠️ PATH dependency in hooks (set manually)
 - ⚠️ Haiku integration incomplete (autogen not active)
 - ⚠️ Summary watcher not deployed (Phase 2.5 deferred)
+- ⚠️ CX Enter timing — relay injection to Codex panes sometimes needs manual Enter despite 500ms delay
+- ⚠️ CC relay piping — `cat file | relay send oc -` delivers "-" instead of stdin content
 
 ---
 
@@ -102,6 +104,22 @@ If critical issues found:
 - [x] Phase 2: Polish (staleness checks, structured logging, CX auto-recovery, integration tests)
 - [x] Phase 3: Legacy removal (delete admin package, sessionmap, autogen; admin pane is sole path)
 - [ ] E2E test: Full 4-pane startup with live daemon
+
+### Recent Fixes (2026-02-17/18)
+- [x] CX routing bug — zombie daemon killed, stale session-map deleted, 5 defensive fixes deployed
+- [x] Idle-aware checkpoint skipping — daemon tracks JSONL mtime, skips when all agents idle, 2h backstop
+- [x] CX auto-compaction — health-check parses Codex footer, injects /compact at <=60% context
+- [x] checkpoint_content rejection — daemon now intercepts and writes beads directly via bd (4fb1fa7)
+- [x] PATH in systemd env — daemon can now find bd binary
+- [x] Adaptive health-check frequency — 5min active, 15min after 3 idle cycles
+
+### Future: Role Restructuring
+- [ ] OC: strict no-code orchestrator, uses background subagents for research to preserve context
+- [ ] CX1: primary coder (Codex), owns its worktree
+- [ ] CX2: dedicated code reviewer/PR pane (Codex), read access to cx1 and cc worktrees
+- [ ] CC: repurposed as infra/testing/research/db — everything CX sandbox prevents. Uses background subagents for test runs to preserve context
+- [ ] Admin: downgrade from Sonnet to Haiku — mechanical skill execution only
+- [ ] Relay: add cx1/cx2 to panes.json, idle detection unchanged (Codex has no JSONL)
 
 ### Long Term
 - [ ] Performance optimization
