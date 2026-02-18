@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const checkpointWriteGracePeriod = 2 * time.Minute
+
 // IdleDetector tracks whether all agents are idle by comparing JSONL session
 // file modification times against the last checkpoint injection time.
 type IdleDetector struct {
@@ -36,7 +38,7 @@ func (d *IdleDetector) RecordCheckpointInjection() {
 }
 
 // AllAgentsIdle returns true if all configured agents' most recent JSONL file
-// has an mtime at or before the last checkpoint injection time.
+// has an mtime at or before the checkpoint injection time plus grace period.
 // Returns false (not idle) if no project dirs are configured.
 func (d *IdleDetector) AllAgentsIdle() bool {
 	d.mu.Lock()
@@ -49,13 +51,14 @@ func (d *IdleDetector) AllAgentsIdle() bool {
 		return false
 	}
 
+	cutoff := lastInjection.Add(checkpointWriteGracePeriod)
 	for _, dir := range dirs {
 		latest, err := latestJSONLMtime(dir)
 		if err != nil {
 			// Can't determine state — assume active
 			return false
 		}
-		if latest.After(lastInjection) {
+		if latest.After(cutoff) {
 			return false
 		}
 	}

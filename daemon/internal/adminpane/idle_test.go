@@ -47,13 +47,16 @@ func TestAllAgentsIdle_OneActive(t *testing.T) {
 	d := NewIdleDetector(map[string]string{"oc": dirIdle, "cc": dirActive}, 2*time.Hour)
 	d.RecordCheckpointInjection()
 
-	// Active agent: file written after injection
-	time.Sleep(10 * time.Millisecond)
+	// Active agent: file mtime beyond grace period after injection
 	fActive := filepath.Join(dirActive, "session.jsonl")
 	os.WriteFile(fActive, []byte("{}"), 0644)
+	activeTime := time.Now().Add(checkpointWriteGracePeriod + 10*time.Second)
+	if err := os.Chtimes(fActive, activeTime, activeTime); err != nil {
+		t.Fatal(err)
+	}
 
 	if d.AllAgentsIdle() {
-		t.Fatal("expected not idle when one agent has recent JSONL")
+		t.Fatal("expected not idle when one agent has JSONL newer than injection+grace")
 	}
 }
 
@@ -77,13 +80,16 @@ func TestAllAgentsIdle_MultipleJSONL_PicksLatest(t *testing.T) {
 	d := NewIdleDetector(map[string]string{"oc": dir}, 2*time.Hour)
 	d.RecordCheckpointInjection()
 
-	// New file written after injection
-	time.Sleep(10 * time.Millisecond)
+	// New file mtime beyond grace period after injection
 	recent := filepath.Join(dir, "recent.jsonl")
 	os.WriteFile(recent, []byte("{}"), 0644)
+	recentTime := time.Now().Add(checkpointWriteGracePeriod + 10*time.Second)
+	if err := os.Chtimes(recent, recentTime, recentTime); err != nil {
+		t.Fatal(err)
+	}
 
 	if d.AllAgentsIdle() {
-		t.Fatal("expected not idle when latest JSONL is newer than injection")
+		t.Fatal("expected not idle when latest JSONL is newer than injection+grace")
 	}
 }
 
@@ -105,6 +111,27 @@ func TestAllAgentsIdle_BeforeFirstInjection(t *testing.T) {
 	d.RecordCheckpointInjection()
 	if !d.AllAgentsIdle() {
 		t.Fatal("expected idle after first injection with old JSONL")
+	}
+}
+
+func TestAllAgentsIdle_WriteWithinGracePeriodIsIdle(t *testing.T) {
+	dir := t.TempDir()
+
+	f := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(f, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewIdleDetector(map[string]string{"oc": dir}, 2*time.Hour)
+	d.RecordCheckpointInjection()
+
+	withinGrace := time.Now().Add(30 * time.Second)
+	if err := os.Chtimes(f, withinGrace, withinGrace); err != nil {
+		t.Fatal(err)
+	}
+
+	if !d.AllAgentsIdle() {
+		t.Fatal("expected idle when latest JSONL is within checkpoint grace period")
 	}
 }
 
