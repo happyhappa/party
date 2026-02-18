@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -169,6 +170,17 @@ func main() {
 					_ = logger.Log(logpkg.NewEvent("checkpoint_content_error", env.From, "admin").WithMsgID(env.MsgID).WithError(err.Error()))
 					continue
 				}
+
+				// Normalize checkpoint correlation key at daemon-write time.
+				// Keep the agent-provided chk_id for traceability.
+				originalChkID := cc.ChkID
+				if cc.Labels == nil {
+					cc.Labels = map[string]string{}
+				}
+				cc.Labels["agent_chk_id"] = originalChkID
+				cycleKey := fmt.Sprintf("cycle-%d", time.Now().UTC().Unix()/60)
+				cc.ChkID = cycleKey
+
 				if cc.Role != env.From {
 					_ = logger.Log(logpkg.NewEvent("checkpoint_content_error", env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithError("role mismatch"))
 					continue
