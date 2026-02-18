@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/norm/relay-daemon/internal/adminpane"
+	"github.com/norm/relay-daemon/internal/checkpoint"
 	cfgpkg "github.com/norm/relay-daemon/internal/config"
 	inbox "github.com/norm/relay-daemon/internal/inbox"
 	logpkg "github.com/norm/relay-daemon/internal/log"
@@ -159,6 +160,27 @@ func main() {
 				return
 			}
 			_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeReceived, env.From, env.To).WithMsgID(env.MsgID))
+
+			// Handle checkpoint content directly so bead writing does not depend on
+			// admin-pane prompt state or legacy pending-request state machines.
+			if env.To == "admin" && env.Kind == "checkpoint_content" {
+				cc, err := checkpoint.Parse(env.Payload)
+				if err != nil {
+					_ = logger.Log(logpkg.NewEvent("checkpoint_content_error", env.From, "admin").WithMsgID(env.MsgID).WithError(err.Error()))
+					continue
+				}
+				if cc.Role != env.From {
+					_ = logger.Log(logpkg.NewEvent("checkpoint_content_error", env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithError("role mismatch"))
+					continue
+				}
+				beadID, err := checkpoint.WriteBead(cc)
+				if err != nil {
+					_ = logger.Log(logpkg.NewEvent("checkpoint_bead_error", env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithError(err.Error()))
+					continue
+				}
+				_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeCheckpointAck, env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithStatus("written:"+beadID))
+				continue
+			}
 
 			// Handle broadcast to all agents (including admin if present)
 			if env.To == "all" {
