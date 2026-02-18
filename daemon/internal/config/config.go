@@ -40,6 +40,11 @@ type Config struct {
 	AdminRelaunchCmd     string
 	PaneMapVersion       int
 	PaneMapRegisteredAt  string
+
+	// Idle detection
+	ClaudeProjectDirs    map[string]string // role → ~/.claude/projects/{slug}/ dir
+	IdleBackstopInterval time.Duration     // max time between checkpoint injections even when idle
+	DeadmanThreshold     time.Duration     // fixed threshold for admin deadman detection
 }
 
 // Default returns the default configuration.
@@ -72,6 +77,11 @@ func Default() *Config {
 		AdminRecycleCycles:  6,
 		AdminMaxUptime:      2 * time.Hour,
 		AdminRelaunchCmd:    "claude --dangerously-skip-permissions",
+
+		// Idle detection defaults
+		ClaudeProjectDirs:    map[string]string{},
+		IdleBackstopInterval: 2 * time.Hour,
+		DeadmanThreshold:     10 * time.Minute,
 	}
 }
 
@@ -105,6 +115,16 @@ func Load() (*Config, error) {
 	overrideDuration(&cfg.AdminMaxUptime, "RELAY_ADMIN_MAX_UPTIME")
 	overrideString(&cfg.AdminAlertHook, "RELAY_ADMIN_ALERT_HOOK")
 	overrideString(&cfg.AdminRelaunchCmd, "RELAY_ADMIN_RELAUNCH_CMD")
+
+	// Idle detection
+	for _, role := range []string{"oc", "cc", "cx"} {
+		envKey := "RELAY_PROJECT_DIR_" + strings.ToUpper(role)
+		if val := os.Getenv(envKey); val != "" {
+			cfg.ClaudeProjectDirs[role] = val
+		}
+	}
+	overrideDuration(&cfg.IdleBackstopInterval, "RELAY_IDLE_BACKSTOP_INTERVAL")
+	overrideDuration(&cfg.DeadmanThreshold, "RELAY_DEADMAN_THRESHOLD")
 
 	return cfg, nil
 }

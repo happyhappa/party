@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/norm/relay-daemon/internal/adminpane"
+	"github.com/norm/relay-daemon/internal/checkpoint"
 	cfgpkg "github.com/norm/relay-daemon/internal/config"
 	inbox "github.com/norm/relay-daemon/internal/inbox"
 	logpkg "github.com/norm/relay-daemon/internal/log"
@@ -18,17 +19,46 @@ import (
 	tmuxpkg "github.com/norm/relay-daemon/internal/tmux"
 )
 
+// acquireLockfile takes an exclusive non-blocking flock on the given path.
+// Returns the open file (caller must keep it open) or an error if already locked.
+func acquireLockfile(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return f, nil
+}
+
 func main() {
 	cfg, err := cfgpkg.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
 
+	// Fix 2: Acquire exclusive lockfile to prevent duplicate daemons
+	lockPath := filepath.Join(cfg.StateDir, "relay-daemon.lock")
+	lockFile, err := acquireLockfile(lockPath)
+	if err != nil {
+		log.Fatalf("another relay-daemon is already running (lock %s): %v", lockPath, err)
+	}
+	defer lockFile.Close()
+
+	// Fix 3: Clean stale session-map files from previous runs
+	staleFiles, _ := filepath.Glob(filepath.Join(cfg.StateDir, "session-map-*.json"))
+	for _, f := range staleFiles {
+		log.Printf("removing stale session-map: %s", f)
+		os.Remove(f)
+	}
+
 	logger := logpkg.NewEventLog(cfg.LogDir)
 	mux := tmuxpkg.New()
 	if err := cfg.LoadPaneMap(); err != nil {
 		log.Printf("warning: could not load pane map: %v (using defaults)", err)
-		cfg.PaneTargets = map[string]string{"oc": "%0", "cc": "%1", "cx": "%2"}
+		cfg.PaneTargets = map[string]string{"oc": "%0", "cc": "%1", "admin": "%2", "cx": "%3"}
 	}
 	injector := tmuxpkg.NewInjector(mux, cfg.PaneTargets)
 	injector.SetLogger(logger)
@@ -68,6 +98,13 @@ func main() {
 		adminDir := filepath.Join(filepath.Dir(cfg.StateDir), "admin")
 		recycler := adminpane.NewRecycler(mux, cfg, logger, adminPaneID, adminDir)
 		adminTimer.SetRecycler(recycler)
+
+		// Idle detection
+		if len(cfg.ClaudeProjectDirs) > 0 {
+			idleDetector := adminpane.NewIdleDetector(cfg.ClaudeProjectDirs, cfg.IdleBackstopInterval)
+			adminTimer.SetIdleDetector(idleDetector)
+			log.Printf("idle detection enabled (%d project dirs, backstop %s)", len(cfg.ClaudeProjectDirs), cfg.IdleBackstopInterval)
+		}
 	} else {
 		log.Printf("warning: no 'admin' in pane map; admin timer disabled")
 	}
@@ -123,6 +160,27 @@ func main() {
 				return
 			}
 			_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeReceived, env.From, env.To).WithMsgID(env.MsgID))
+
+			// Handle checkpoint content directly so bead writing does not depend on
+			// admin-pane prompt state or legacy pending-request state machines.
+			if env.To == "admin" && env.Kind == "checkpoint_content" {
+				cc, err := checkpoint.Parse(env.Payload)
+				if err != nil {
+					_ = logger.Log(logpkg.NewEvent("checkpoint_content_error", env.From, "admin").WithMsgID(env.MsgID).WithError(err.Error()))
+					continue
+				}
+				if cc.Role != env.From {
+					_ = logger.Log(logpkg.NewEvent("checkpoint_content_error", env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithError("role mismatch"))
+					continue
+				}
+				beadID, err := checkpoint.WriteBead(cc)
+				if err != nil {
+					_ = logger.Log(logpkg.NewEvent("checkpoint_bead_error", env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithError(err.Error()))
+					continue
+				}
+				_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeCheckpointAck, env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithStatus("written:"+beadID))
+				continue
+			}
 
 			// Handle broadcast to all agents (including admin if present)
 			if env.To == "all" {
