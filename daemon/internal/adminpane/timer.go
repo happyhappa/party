@@ -218,7 +218,7 @@ func (t *AdminTimer) injectCommand(cmd string) {
 func (t *AdminTimer) checkDeadman() {
 	t.mu.Lock()
 	elapsed := time.Since(t.lastInjectTime)
-	threshold := 2 * t.cfg.HealthCheckInterval
+	threshold := t.cfg.DeadmanThreshold
 	alertHook := t.cfg.AdminAlertHook
 	t.mu.Unlock()
 
