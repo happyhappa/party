@@ -39,6 +39,13 @@ CC_DIR="$PROJECT_DIR/cc-wt"
 CX_DIR="$PROJECT_DIR/cx-wt"
 ADMIN_DIR="$PARTY_DIR/admin"
 
+# Claude project dir slugs (path with / replaced by -)
+# Used by relay daemon for idle detection via JSONL mtime
+dir_to_slug() { echo "-${1#/}" | tr '/_' '--'; }
+OC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$OC_DIR")"
+CC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$CC_DIR")"
+# CX (Codex) does not produce Claude JSONL session logs — excluded from idle detection
+
 # Verify worktrees exist
 for dir in "$OC_DIR" "$CC_DIR" "$CX_DIR"; do
     if [[ ! -d "$dir" ]]; then
@@ -90,10 +97,14 @@ tmux split-window -v -l 50% -t "$SESSION:main.1" -c "$ADMIN_DIR"
 # Create a new tmux window named "cx"; admin will launch CX later.
 tmux new-window -d -t "$SESSION" -n cx -c "$CX_DIR"
 
-# ── Name panes ────────────────────────────────────────────────────────
+# ── Name panes (title for display, @role for reliable matching) ───────
 tmux select-pane -t "$SESSION:main.0" -T "OC"
 tmux select-pane -t "$SESSION:main.1" -T "CC"
 tmux select-pane -t "$SESSION:main.2" -T "Admin"
+tmux set-option -p -t "$SESSION:main.0" @role oc
+tmux set-option -p -t "$SESSION:main.1" @role cc
+tmux set-option -p -t "$SESSION:main.2" @role admin
+tmux set-option -p -t "$SESSION:cx.0" @role cx
 
 # ── Pane border labels (tmux 2.6+) ───────────────────────────────────
 tmux set-option -t "$SESSION" pane-border-status top
@@ -103,12 +114,12 @@ tmux set-option -t "$SESSION" pane-border-format " #{pane_title} "
 # OC/CC: continue previous session, fall back to fresh if none exists
 CLAUDE_CMD='claude -c --dangerously-skip-permissions || claude --dangerously-skip-permissions'
 # Admin: always fresh, limited toolset (stateless, behavior driven by skills + CLAUDE.md)
-ADMIN_CMD='claude --tools "Bash,Read,Glob" --permission-mode bypassPermissions'
+ADMIN_CMD='claude --model sonnet --tools "Bash,Read,Glob" --permission-mode bypassPermissions'
 
 tmux send-keys -t "$SESSION:main.0" "export AGENT_ROLE=oc && ($CLAUDE_CMD)" Enter
 tmux send-keys -t "$SESSION:main.1" "export AGENT_ROLE=cc && ($CLAUDE_CMD)" Enter
 tmux send-keys -t "$SESSION:main.2" \
-    "export AGENT_ROLE=admin && export BEADS_DIR=$PARTY_DIR/oc/.beads && $ADMIN_CMD" Enter
+    "export AGENT_ROLE=admin && export BEADS_DIR=$PARTY_DIR/oc/.beads && export PATH=\$HOME/go/bin:\$HOME/.local/bin:\$PATH && $ADMIN_CMD" Enter
 
 # ── Select OC pane as default focus ──────────────────────────────────
 tmux select-pane -t "$SESSION:main.0"
@@ -146,6 +157,20 @@ cat > "$RELAY_PANE_MAP" <<EOF
 EOF
 cp "$RELAY_PANE_MAP" "$ADMIN_PANE_MAP"
 
+# ── Write systemd env file for relay daemon ────────────────────────────
+SYSTEMD_ENV="$HOME/.party/$PROJECT_NAME.systemd.env"
+mkdir -p "$(dirname "$SYSTEMD_ENV")"
+log "Writing systemd env to $SYSTEMD_ENV"
+cat > "$SYSTEMD_ENV" <<EOF
+PARTY_SESSION=$SESSION
+PARTY_OC_WORKTREE=$OC_DIR
+PARTY_CC_WORKTREE=$CC_DIR
+PARTY_CX_WORKTREE=$CX_DIR
+BEADS_DIR=$PARTY_DIR/oc/.beads
+RELAY_PROJECT_DIR_OC=$OC_PROJECT_DIR
+RELAY_PROJECT_DIR_CC=$CC_PROJECT_DIR
+EOF
+
 log ""
 log "Agents launched:"
 log "  OC:    $OC_DIR"
@@ -155,10 +180,14 @@ log "  CX:    $CX_DIR (hidden window, admin launches)"
 log ""
 
 # ── Restart relay daemon to pick up new panes.json ───────────────────
-if systemctl --user is-active relay-daemon &>/dev/null; then
-    log "Restarting relay daemon to load new pane map..."
-    systemctl --user restart relay-daemon
-elif systemctl --user is-enabled relay-daemon &>/dev/null; then
+# Kill ALL relay-daemon processes first (prevents zombie daemons from
+# racing on the outbox with stale pane maps)
+if pgrep -f relay-daemon &>/dev/null; then
+    log "Killing existing relay-daemon processes..."
+    pkill -f relay-daemon 2>/dev/null || true
+    sleep 0.5
+fi
+if systemctl --user is-enabled relay-daemon &>/dev/null; then
     log "Starting relay daemon..."
     systemctl --user start relay-daemon
 else

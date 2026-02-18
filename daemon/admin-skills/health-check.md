@@ -31,14 +31,28 @@ The `CMD` value should be a known agent process. Expected values:
 - `oc`, `cc`: `claude` or `node` (Claude Code)
 - `cx`: `codex` or `node` (Codex CLI)
 
-If `CMD` is `bash`, `zsh`, or another bare shell, the agent has likely crashed.
+If `CMD` is `bash`, `zsh`, or another bare shell, the agent has **possibly** crashed — but check the Codex footer override (step 3a-cx) before concluding.
+
+**a-cx) Codex footer override (CX only):**
+Codex CLI shows a distinctive footer in its idle state. Check if `TAIL` contains `context left` or `? for shortcuts`. If either is present, CX is alive regardless of what `CMD` reports — mark CX as `healthy` and skip remaining checks for CX.
+
+```bash
+if [[ "$ROLE" == "cx" ]]; then
+  if echo "$TAIL" | grep -qE '(context left|\? for shortcuts)'; then
+    # Codex is running — its footer is visible
+    STATUS="healthy"
+    # skip remaining checks for cx
+    continue
+  fi
+fi
+```
 
 **b) Error pattern scan:**
 Check `TAIL` for repeated occurrences of: `error`, `panic`, `FATAL`, `killed`, `Traceback`, `SIGTERM`, `SIGKILL`, `OOM`.
 A single occurrence may be benign; three or more of the same pattern indicates a problem.
 
 **c) Bare prompt detection:**
-If the last non-empty line of `TAIL` matches a shell prompt pattern (`$`, `%`, `>`, or contains the hostname) AND `CMD` is a shell, the agent is not running.
+If the last non-empty line of `TAIL` matches a shell prompt pattern (`$`, `%`, `>`, or contains the hostname) AND `CMD` is a shell, the agent is not running. Note: the Codex prompt `›` is NOT a shell prompt — it is handled by step 3a-cx above.
 
 **d) Stale output detection:**
 Compare an MD5 hash of `TAIL` against the stored hash from the previous health check:
@@ -87,6 +101,27 @@ echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-anomal
 ```
 
 Do NOT auto-recover OC or CC — only log warnings for those and include in the ACK. OC/CC recovery requires human judgment.
+
+### 6b. Auto-compact CX if context low
+
+If CX is healthy (passed step 3a-cx), check its context level. Parse the context percentage from the CX pane tail:
+
+```bash
+CX_CONTEXT=$(echo "$CX_TAIL" | grep -oP '\d+(?=% context left)' | tail -1)
+CX_IDLE=$(echo "$CX_TAIL" | grep -q '? for shortcuts' && echo "true" || echo "false")
+```
+
+If `CX_CONTEXT` is a number, `CX_CONTEXT <= 60`, AND `CX_IDLE == "true"`: inject `/compact` into the CX pane to trigger context compaction.
+
+```bash
+if [[ -n "$CX_CONTEXT" && "$CX_CONTEXT" -le 60 && "$CX_IDLE" == "true" ]]; then
+  CX_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cx')
+  tmux send-keys -t "$CX_PANE" "/compact" Enter
+  echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_compact\",\"context_pct\":$CX_CONTEXT}" >> "$PWD/state/checkpoints.log"
+fi
+```
+
+Do NOT restart CX for low context — compact is non-destructive. CX processes it when ready, session persists, pane and routing stay intact.
 
 ### 7. Log completion
 

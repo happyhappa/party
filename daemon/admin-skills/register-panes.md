@@ -10,9 +10,9 @@ echo "Using tmux session: $SESSION"
 ```
 
 ### 2. List All Panes
-Enumerate every pane across all windows in the session:
+Enumerate every pane across all windows in the session, using the `@role` user option (not pane_title, which Claude Code overwrites):
 ```bash
-tmux list-panes -s -t "$SESSION" -F '#{pane_id} #{pane_title} #{window_name}'
+tmux list-panes -s -t "$SESSION" -F '#{pane_id} #{@role} #{window_name}'
 ```
 
 ### 3. Read Current Version
@@ -24,38 +24,39 @@ echo "Current version: $CURRENT_VERSION -> New version: $NEW_VERSION"
 ```
 
 ### 4. Build Pane Map
-Map pane titles to roles. Match titles OC, CC, Admin, and CX to their pane IDs using case-insensitive comparison. Also check window names for the CX hidden window (CX sometimes runs in a named window rather than a titled pane).
+Match the `@role` user option to roles. The `@role` option is set by party-v2 at launch and is not overwritten by Claude Code.
 
 For each pane in the listing:
-- If the pane title matches "oc" (case-insensitive), assign its pane ID to the `oc` role
-- If the pane title matches "cc" (case-insensitive), assign its pane ID to the `cc` role
-- If the pane title matches "admin" (case-insensitive), assign its pane ID to the `admin` role
-- If the pane title matches "cx" (case-insensitive) OR the window name matches "cx" (case-insensitive), assign its pane ID to the `cx` role
+- If `@role` is "oc", assign its pane ID to the `oc` role
+- If `@role` is "cc", assign its pane ID to the `cc` role
+- If `@role` is "admin", assign its pane ID to the `admin` role
+- If `@role` is "cx", assign its pane ID to the `cx` role
+- If `@role` is empty but window name is "cx" (case-insensitive), assign its pane ID to the `cx` role
 
 Build the mapping as shell variables:
 ```bash
-while read -r PANE_ID PANE_TITLE WINDOW_NAME; do
-  TITLE_LOWER=$(echo "$PANE_TITLE" | tr '[:upper:]' '[:lower:]')
-  WINDOW_LOWER=$(echo "$WINDOW_NAME" | tr '[:upper:]' '[:lower:]')
-  case "$TITLE_LOWER" in
+OC_PANE="" CC_PANE="" ADMIN_PANE="" CX_PANE=""
+while read -r PANE_ID ROLE WINDOW_NAME; do
+  case "$ROLE" in
     oc)    OC_PANE="$PANE_ID" ;;
     cc)    CC_PANE="$PANE_ID" ;;
     admin) ADMIN_PANE="$PANE_ID" ;;
     cx)    CX_PANE="$PANE_ID" ;;
   esac
-  # Also check window name for CX
-  if [[ -z "$CX_PANE" && "$WINDOW_LOWER" == "cx" ]]; then
+  # Fallback: check window name for CX
+  if [[ -z "$CX_PANE" && "$(echo "$WINDOW_NAME" | tr '[:upper:]' '[:lower:]')" == "cx" ]]; then
     CX_PANE="$PANE_ID"
   fi
-done < <(tmux list-panes -s -t "$SESSION" -F '#{pane_id} #{pane_title} #{window_name}')
+done < <(tmux list-panes -s -t "$SESSION" -F '#{pane_id} #{@role} #{window_name}')
 ```
 
 Log warnings for any roles that could not be found:
 ```bash
-for ROLE_VAR in OC_PANE CC_PANE ADMIN_PANE CX_PANE; do
-  if [[ -z "${!ROLE_VAR}" ]]; then
-    ROLE_NAME=$(echo "$ROLE_VAR" | sed 's/_PANE//' | tr '[:upper:]' '[:lower:]')
-    echo "WARNING: Could not find pane for role '$ROLE_NAME'"
+for ROLE in oc cc admin cx; do
+  VAR="${ROLE^^}_PANE"
+  eval "VAL=\$$VAR"
+  if [[ -z "$VAL" ]]; then
+    echo "WARNING: Could not find pane for role '$ROLE'"
   fi
 done
 ```
