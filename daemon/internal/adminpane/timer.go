@@ -186,6 +186,9 @@ func (t *AdminTimer) refreshPaneMapIfStale() {
 		return
 	}
 
+	// Propagate updated targets to the injector so queues use new pane IDs
+	t.injector.UpdateTargets(t.cfg.PaneTargets)
+
 	t.mu.Lock()
 	t.paneMapRefreshed = true
 	t.mu.Unlock()

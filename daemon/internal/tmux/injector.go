@@ -67,6 +67,22 @@ func (i *Injector) SetQueueMaxAge(maxAge time.Duration) {
 	i.queueMaxAge = maxAge
 }
 
+// UpdateTargets replaces the target→paneID mapping and updates any existing
+// paneQueue paneIDs. This must be called after a pane map refresh so the
+// injector uses the current pane layout.
+func (i *Injector) UpdateTargets(targets map[string]string) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.targets = targets
+	for name, pq := range i.queues {
+		if newPane, ok := targets[name]; ok {
+			pq.mu.Lock()
+			pq.paneID = newPane
+			pq.mu.Unlock()
+		}
+	}
+}
+
 func (i *Injector) Start(ctx context.Context) {
 	i.startOnce.Do(func() {
 		i.mu.Lock()
