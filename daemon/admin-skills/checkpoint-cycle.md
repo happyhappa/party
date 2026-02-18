@@ -18,15 +18,14 @@ CHK_ID="chk-$(date +%s)-$(head -c 4 /dev/urandom | xxd -p)"
 
 ### 3. Dispatch checkpoint requests
 
-Send a checkpoint request to each agent. Each agent type uses its own invocation format:
+Send a checkpoint request to each agent. OC/CC use relay (which injects slash commands). CX gets direct pane injection since Codex processes `/prompts:` commands at its prompt:
 
 ```bash
 relay send oc "/checkpoint --respond $CHK_ID"
 relay send cc "/checkpoint --respond $CHK_ID"
-relay send cx "Please create a checkpoint with ID $CHK_ID. Use /prompts:checkpoint $CHK_ID"
+CX_PANE=$(cat ~/llm-share/relay/state/panes.json | jq -r '.panes.cx')
+tmux send-keys -t "$CX_PANE" "/prompts:checkpoint $CHK_ID" Enter
 ```
-
-CX (Codex) does not support slash-command injection directly, so it receives a natural-language prompt instead.
 
 ### 4. Log the dispatch
 
