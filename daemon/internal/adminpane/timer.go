@@ -35,6 +35,10 @@ type AdminTimer struct {
 	lastRecycleTime  time.Time
 	paneMapRefreshed bool
 
+	// idle detection
+	idleDetector       *IdleDetector
+	consecutiveIdleHC  int
+
 	// recycler is set externally after construction
 	recycler *Recycler
 }
@@ -50,6 +54,13 @@ func NewAdminTimer(injector *tmux.Injector, cfg *config.Config, logger *logpkg.E
 		startTime:       now,
 		lastRecycleTime: now,
 	}
+}
+
+// SetIdleDetector attaches an idle detector for skipping checkpoints when all agents are idle.
+func (t *AdminTimer) SetIdleDetector(d *IdleDetector) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.idleDetector = d
 }
 
 // SetRecycler attaches a recycler for triggering admin recycles after checkpoint cycles.
@@ -109,7 +120,21 @@ func (t *AdminTimer) runCheckpointTicker(ctx context.Context) {
 			return
 		case <-ticker.C:
 			t.refreshPaneMapIfStale()
+
+			// Skip checkpoint if all agents are idle (unless backstop forces it)
+			t.mu.Lock()
+			idle := t.idleDetector
+			t.mu.Unlock()
+			if idle != nil && idle.AllAgentsIdle() && !idle.ShouldBackstop() {
+				log.Printf("admin timer: all agents idle, skipping checkpoint-cycle")
+				t.logEvent("checkpoint_skipped_idle", "")
+				continue
+			}
+
 			t.injectCommand("/checkpoint-cycle")
+			if idle != nil {
+				idle.RecordCheckpointInjection()
+			}
 
 			t.mu.Lock()
 			t.checkpointCycles++
@@ -141,8 +166,11 @@ func (t *AdminTimer) runCheckpointTicker(ctx context.Context) {
 }
 
 func (t *AdminTimer) runHealthTicker(ctx context.Context) {
-	ticker := time.NewTicker(t.cfg.HealthCheckInterval)
+	baseInterval := t.cfg.HealthCheckInterval
+	idleInterval := 3 * baseInterval // 15min when base is 5min
+	ticker := time.NewTicker(baseInterval)
 	defer ticker.Stop()
+	usingIdle := false
 
 	for {
 		select {
@@ -152,6 +180,34 @@ func (t *AdminTimer) runHealthTicker(ctx context.Context) {
 			t.refreshPaneMapIfStale()
 			t.injectCommand("/health-check")
 			t.checkDeadman()
+
+			// Adjust health-check frequency based on idle state
+			t.mu.Lock()
+			idle := t.idleDetector
+			t.mu.Unlock()
+
+			if idle != nil && idle.AllAgentsIdle() {
+				t.mu.Lock()
+				t.consecutiveIdleHC++
+				count := t.consecutiveIdleHC
+				t.mu.Unlock()
+				if count >= 3 && !usingIdle {
+					ticker.Reset(idleInterval)
+					usingIdle = true
+					log.Printf("admin timer: switching to idle health-check interval (%s)", idleInterval)
+					t.logEvent("health_interval_idle", idleInterval.String())
+				}
+			} else {
+				t.mu.Lock()
+				t.consecutiveIdleHC = 0
+				t.mu.Unlock()
+				if usingIdle {
+					ticker.Reset(baseInterval)
+					usingIdle = false
+					log.Printf("admin timer: switching to active health-check interval (%s)", baseInterval)
+					t.logEvent("health_interval_active", baseInterval.String())
+				}
+			}
 		}
 	}
 }

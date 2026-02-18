@@ -97,6 +97,13 @@ func main() {
 		adminDir := filepath.Join(filepath.Dir(cfg.StateDir), "admin")
 		recycler := adminpane.NewRecycler(mux, cfg, logger, adminPaneID, adminDir)
 		adminTimer.SetRecycler(recycler)
+
+		// Idle detection
+		if len(cfg.ClaudeProjectDirs) > 0 {
+			idleDetector := adminpane.NewIdleDetector(cfg.ClaudeProjectDirs, cfg.IdleBackstopInterval)
+			adminTimer.SetIdleDetector(idleDetector)
+			log.Printf("idle detection enabled (%d project dirs, backstop %s)", len(cfg.ClaudeProjectDirs), cfg.IdleBackstopInterval)
+		}
 	} else {
 		log.Printf("warning: no 'admin' in pane map; admin timer disabled")
 	}
