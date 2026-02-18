@@ -20,7 +20,7 @@ The relay daemon injects skill invocations into your pane wrapped in `<relay-mes
 
 When you receive one of these, extract the command name (e.g. `/health-check`) and execute it as a Claude Code slash command. These are your installed skills in `.claude/commands/`.
 
-Checkpoint responses from agents arrive as `<relay-message>` tags with `kind="checkpoint_content"`. Process these by writing beads via `bd create`.
+Checkpoint content from agents is handled directly by the relay daemon (writes beads via `bd create`). You do not need to process `checkpoint_content` messages — the daemon intercepts them before they reach you.
 
 ## CRITICAL: How to Execute Skills
 
