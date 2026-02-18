@@ -31,14 +31,28 @@ The `CMD` value should be a known agent process. Expected values:
 - `oc`, `cc`: `claude` or `node` (Claude Code)
 - `cx`: `codex` or `node` (Codex CLI)
 
-If `CMD` is `bash`, `zsh`, or another bare shell, the agent has likely crashed.
+If `CMD` is `bash`, `zsh`, or another bare shell, the agent has **possibly** crashed — but check the Codex footer override (step 3a-cx) before concluding.
+
+**a-cx) Codex footer override (CX only):**
+Codex CLI shows a distinctive footer in its idle state. Check if `TAIL` contains `context left` or `? for shortcuts`. If either is present, CX is alive regardless of what `CMD` reports — mark CX as `healthy` and skip remaining checks for CX.
+
+```bash
+if [[ "$ROLE" == "cx" ]]; then
+  if echo "$TAIL" | grep -qE '(context left|\? for shortcuts)'; then
+    # Codex is running — its footer is visible
+    STATUS="healthy"
+    # skip remaining checks for cx
+    continue
+  fi
+fi
+```
 
 **b) Error pattern scan:**
 Check `TAIL` for repeated occurrences of: `error`, `panic`, `FATAL`, `killed`, `Traceback`, `SIGTERM`, `SIGKILL`, `OOM`.
 A single occurrence may be benign; three or more of the same pattern indicates a problem.
 
 **c) Bare prompt detection:**
-If the last non-empty line of `TAIL` matches a shell prompt pattern (`$`, `%`, `>`, or contains the hostname) AND `CMD` is a shell, the agent is not running.
+If the last non-empty line of `TAIL` matches a shell prompt pattern (`$`, `%`, `>`, or contains the hostname) AND `CMD` is a shell, the agent is not running. Note: the Codex prompt `›` is NOT a shell prompt — it is handled by step 3a-cx above.
 
 **d) Stale output detection:**
 Compare an MD5 hash of `TAIL` against the stored hash from the previous health check:
