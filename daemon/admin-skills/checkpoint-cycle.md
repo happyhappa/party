@@ -18,12 +18,15 @@ CHK_ID="chk-$(date +%s)-$(head -c 4 /dev/urandom | xxd -p)"
 
 ### 3. Dispatch checkpoint requests
 
-Send a checkpoint request to each agent. OC/CC use relay (which injects slash commands). CX gets direct pane injection since Codex processes `/prompts:` commands at its prompt:
+Send a checkpoint request to each agent via direct tmux injection. Slash commands are never sent via relay — relay is for inter-agent conversation only.
 
 ```bash
-relay send oc "/checkpoint --respond $CHK_ID"
-relay send cc "/checkpoint --respond $CHK_ID"
-CX_PANE=$(cat ~/llm-share/relay/state/panes.json | jq -r '.panes.cx')
+PANES_JSON=$(cat ~/llm-share/relay/state/panes.json)
+OC_PANE=$(echo "$PANES_JSON" | jq -r '.panes.oc')
+CC_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cc')
+CX_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cx')
+tmux send-keys -t "$OC_PANE" "/checkpoint --respond $CHK_ID" Enter
+tmux send-keys -t "$CC_PANE" "/checkpoint --respond $CHK_ID" Enter
 tmux send-keys -t "$CX_PANE" "/prompts:checkpoint $CHK_ID" Enter
 ```
 
@@ -45,8 +48,8 @@ Checkpoint cycle $CHK_ID dispatched.
 
 ## Rules
 
-- Do NOT send any relay messages other than the checkpoint dispatches in step 3.
+- Do NOT send any relay messages -- checkpoint dispatches use direct tmux injection, not relay.
 - Do NOT wait for agent responses -- this is fire-and-forget dispatch.
-- If a `relay send` command fails for one agent, continue dispatching to the remaining agents. Note the failure in the JSONL log entry by adjusting the `dispatched_to` array.
+- If a `tmux send-keys` command fails for one agent, continue dispatching to the remaining agents. Note the failure in the JSONL log entry by adjusting the `dispatched_to` array.
 - Return to idle immediately after completion.
 - Keep total output under 3 lines to minimize context consumption.
