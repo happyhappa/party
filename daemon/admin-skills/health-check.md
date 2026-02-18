@@ -102,6 +102,27 @@ echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-anomal
 
 Do NOT auto-recover OC or CC — only log warnings for those and include in the ACK. OC/CC recovery requires human judgment.
 
+### 6b. Auto-compact CX if context low
+
+If CX is healthy (passed step 3a-cx), check its context level. Parse the context percentage from the CX pane tail:
+
+```bash
+CX_CONTEXT=$(echo "$CX_TAIL" | grep -oP '\d+(?=% context left)' | tail -1)
+CX_IDLE=$(echo "$CX_TAIL" | grep -q '? for shortcuts' && echo "true" || echo "false")
+```
+
+If `CX_CONTEXT` is a number, `CX_CONTEXT <= 60`, AND `CX_IDLE == "true"`: inject `/compact` into the CX pane to trigger context compaction.
+
+```bash
+if [[ -n "$CX_CONTEXT" && "$CX_CONTEXT" -le 60 && "$CX_IDLE" == "true" ]]; then
+  CX_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cx')
+  tmux send-keys -t "$CX_PANE" "/compact" Enter
+  echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_compact\",\"context_pct\":$CX_CONTEXT}" >> "$PWD/state/checkpoints.log"
+fi
+```
+
+Do NOT restart CX for low context — compact is non-destructive. CX processes it when ready, session persists, pane and routing stay intact.
+
 ### 7. Log completion
 
 ```bash
