@@ -53,7 +53,7 @@ func Default() *Config {
 	shareDir := filepath.Join(home, "llm-share")
 	return &Config{
 		ShareDir:          shareDir,
-		InboxDir:          filepath.Join(shareDir, "relay", "outbox"),
+		InboxDir:          filepath.Join(home, ".local", "share", "relay", "outbox"),
 		LogDir:            filepath.Join(shareDir, "relay", "log"),
 		StateDir:          filepath.Join(shareDir, "relay", "state"),
 		AttacksDir:        filepath.Join(shareDir, "attacks"),
