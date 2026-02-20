@@ -82,7 +82,6 @@ fi
 
 # 3. Install scripts
 info "Installing scripts..."
-ln -sf "$SCRIPT_DIR/party-v2" "$BIN_DIR/party-v2"
 ln -sf "$MAIN_CHECKOUT/bin/party" "$BIN_DIR/party"
 [[ -f "$SCRIPT_DIR/s3-sync" ]] && ln -sf "$SCRIPT_DIR/s3-sync" "$BIN_DIR/s3-sync" || true
 log "  ✓ Scripts symlinked in $BIN_DIR (pointing to $MAIN_CHECKOUT)"
@@ -164,7 +163,7 @@ echo ""
 log "Installation complete!"
 echo ""
 info "Next steps:"
-info "  1. Start tmux layout:    party-v2"
+info "  1. Start tmux layout:    party"
 info "  2. Start relay daemon:   relay-daemon (or systemctl --user start relay-daemon)"
 info "  3. Start S3 sync:        s3-sync --daemon (or systemctl --user start s3-sync)"
 echo ""
