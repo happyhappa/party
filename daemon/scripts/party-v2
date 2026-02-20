@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+#
+# party-v2 - Creates 4-pane tmux layout for LLM orchestration
+#
+# Layout (OC 40% left, right column: CC top 50%, Admin bottom 50%):
+# ┌────────────┬────────────────────┐
+# │            │     CC (50%)       │
+# │  OC (40%) ├────────────────────┤
+# │            │   Admin (50%)     │
+# └────────────┴────────────────────┘
+# + hidden tmux window "cx" for CX agent
+#
+# Usage: party-v2 [session-name] [project-dir]
+#
+
+set -euo pipefail
+
+SESSION="${1:-party}"
+PROJECT_DIR="${2:-$HOME/Sandbox/leaseupcre}"
+PROJECT_NAME="$(basename "$PROJECT_DIR")"
+PARTY_DIR="$HOME/party/$PROJECT_NAME"
+
+# Colors for status
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+log() {
+    echo -e "${GREEN}[party-v2]${NC} $1"
+}
+
+err() {
+    echo -e "${RED}[party-v2]${NC} $1" >&2
+}
+
+# Per-agent working directories (worktree subdirectories of PROJECT_DIR)
+OC_DIR="$PROJECT_DIR/oc-wt"
+CC_DIR="$PROJECT_DIR/cc-wt"
+CX_DIR="$PROJECT_DIR/cx-wt"
+ADMIN_DIR="$PARTY_DIR/admin"
+
+# Claude project dir slugs (path with / replaced by -)
+# Used by relay daemon for idle detection via JSONL mtime
+dir_to_slug() { echo "-${1#/}" | tr '/_' '--'; }
+OC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$OC_DIR")"
+CC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$CC_DIR")"
+# CX (Codex) does not produce Claude JSONL session logs — excluded from idle detection
+
+# Verify worktrees exist
+for dir in "$OC_DIR" "$CC_DIR" "$CX_DIR"; do
+    if [[ ! -d "$dir" ]]; then
+        err "Worktree directory not found: $dir"
+        exit 1
+    fi
+done
+
+# Check if session already exists
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+    log "Session '$SESSION' already exists. Attaching..."
+    exec tmux attach -t "$SESSION"
+fi
+
+# ── Locate admin skills source ─────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ADMIN_SKILLS_DIR="$SCRIPT_DIR/../admin-skills"
+if [[ ! -d "$ADMIN_SKILLS_DIR" ]]; then
+    err "Admin skills directory not found at $ADMIN_SKILLS_DIR"
+    exit 1
+fi
+
+# ── Create per-pane directories ──────────────────────────────────────
+log "Creating per-pane directories under $PARTY_DIR ..."
+mkdir -p "$PARTY_DIR"/{oc,cc,cx}
+mkdir -p "$PARTY_DIR"/admin/{state,.claude/commands}
+
+# ── Install admin skills and CLAUDE.md ───────────────────────────────
+log "Installing admin skills..."
+cp "$ADMIN_SKILLS_DIR"/*.md "$PARTY_DIR/admin/.claude/commands/" 2>/dev/null || true
+# Move CLAUDE.md to admin root (not commands dir)
+if [[ -f "$PARTY_DIR/admin/.claude/commands/CLAUDE.md" ]]; then
+    mv "$PARTY_DIR/admin/.claude/commands/CLAUDE.md" "$PARTY_DIR/admin/CLAUDE.md"
+fi
+
+# ── Build tmux layout ────────────────────────────────────────────────
+log "Creating session '$SESSION' with 4-pane layout..."
+
+# Create session with OC pane (left 40%)
+tmux new-session -d -s "$SESSION" -n main -c "$OC_DIR"
+
+# Split right column (60% width)
+tmux split-window -h -l 60% -t "$SESSION:main.0" -c "$CC_DIR"
+
+# Split right column into CC (top 50%) and Admin (bottom 50%)
+tmux split-window -v -l 50% -t "$SESSION:main.1" -c "$ADMIN_DIR"
+
+# ── Hidden CX window ─────────────────────────────────────────────────
+# Create a new tmux window named "cx"; admin will launch CX later.
+tmux new-window -d -t "$SESSION" -n cx -c "$CX_DIR"
+
+# ── Name panes (title for display, @role for reliable matching) ───────
+tmux select-pane -t "$SESSION:main.0" -T "OC"
+tmux select-pane -t "$SESSION:main.1" -T "CC"
+tmux select-pane -t "$SESSION:main.2" -T "Admin"
+tmux set-option -p -t "$SESSION:main.0" @role oc
+tmux set-option -p -t "$SESSION:main.1" @role cc
+tmux set-option -p -t "$SESSION:main.2" @role admin
+tmux set-option -p -t "$SESSION:cx.0" @role cx
+
+# ── Pane border labels (tmux 2.6+) ───────────────────────────────────
+tmux set-option -t "$SESSION" pane-border-status top
+tmux set-option -t "$SESSION" pane-border-format " #{pane_title} "
+
+# ── Launch agents ─────────────────────────────────────────────────────
+# OC/CC: continue previous session, fall back to fresh if none exists
+CLAUDE_CMD='claude -c --dangerously-skip-permissions || claude --dangerously-skip-permissions'
+# Admin: always fresh, limited toolset (stateless, behavior driven by skills + CLAUDE.md)
+ADMIN_CMD='claude --model sonnet --tools "Bash,Read,Glob" --permission-mode bypassPermissions'
+
+tmux send-keys -t "$SESSION:main.0" "export AGENT_ROLE=oc && ($CLAUDE_CMD)" Enter
+tmux send-keys -t "$SESSION:main.1" "export AGENT_ROLE=cc && ($CLAUDE_CMD)" Enter
+tmux send-keys -t "$SESSION:main.2" \
+    "export AGENT_ROLE=admin && export BEADS_DIR=$PARTY_DIR/oc/.beads && export PATH=\$HOME/go/bin:\$HOME/.local/bin:\$PATH && $ADMIN_CMD" Enter
+
+# ── Select OC pane as default focus ──────────────────────────────────
+tmux select-pane -t "$SESSION:main.0"
+
+# ── Resolve pane IDs for panes.json ──────────────────────────────────
+OC_ID="$(tmux display -p -t "$SESSION:main.0" '#{pane_id}')"
+CC_ID="$(tmux display -p -t "$SESSION:main.1" '#{pane_id}')"
+ADMIN_ID="$(tmux display -p -t "$SESSION:main.2" '#{pane_id}')"
+CX_ID="$(tmux list-panes -t "$SESSION:cx" -F '#{pane_id}' | head -1)"
+REGISTERED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+log "Layout created. Pane IDs:"
+log "  OC:    $OC_ID"
+log "  CC:    $CC_ID"
+log "  Admin: $ADMIN_ID"
+log "  CX:    $CX_ID (hidden window)"
+
+# ── Write panes.json ─────────────────────────────────────────────────
+# Write to relay state dir (daemon reads from here) and admin state dir
+RELAY_PANE_MAP="$HOME/llm-share/relay/state/panes.json"
+ADMIN_PANE_MAP="$PARTY_DIR/admin/state/panes.json"
+mkdir -p "$(dirname "$RELAY_PANE_MAP")"
+log "Writing pane map to $RELAY_PANE_MAP and $ADMIN_PANE_MAP"
+cat > "$RELAY_PANE_MAP" <<EOF
+{
+  "panes": {
+    "oc": "$OC_ID",
+    "cc": "$CC_ID",
+    "admin": "$ADMIN_ID",
+    "cx": "$CX_ID"
+  },
+  "version": 1,
+  "registered_at": "$REGISTERED_AT"
+}
+EOF
+cp "$RELAY_PANE_MAP" "$ADMIN_PANE_MAP"
+
+# ── Write systemd env file for relay daemon ────────────────────────────
+SYSTEMD_ENV="$HOME/.party/$PROJECT_NAME.systemd.env"
+mkdir -p "$(dirname "$SYSTEMD_ENV")"
+log "Writing systemd env to $SYSTEMD_ENV"
+cat > "$SYSTEMD_ENV" <<EOF
+PARTY_SESSION=$SESSION
+PARTY_OC_WORKTREE=$OC_DIR
+PARTY_CC_WORKTREE=$CC_DIR
+PARTY_CX_WORKTREE=$CX_DIR
+BEADS_DIR=$PARTY_DIR/oc/.beads
+RELAY_PROJECT_DIR_OC=$OC_PROJECT_DIR
+RELAY_PROJECT_DIR_CC=$CC_PROJECT_DIR
+EOF
+
+log ""
+log "Agents launched:"
+log "  OC:    $OC_DIR"
+log "  CC:    $CC_DIR"
+log "  Admin: $ADMIN_DIR"
+log "  CX:    $CX_DIR (hidden window, admin launches)"
+log ""
+
+# ── Restart relay daemon to pick up new panes.json ───────────────────
+# Kill ALL relay-daemon processes first (prevents zombie daemons from
+# racing on the outbox with stale pane maps)
+if pgrep -f relay-daemon &>/dev/null; then
+    log "Killing existing relay-daemon processes..."
+    pkill -f relay-daemon 2>/dev/null || true
+    sleep 0.5
+fi
+if systemctl --user is-enabled relay-daemon &>/dev/null; then
+    log "Starting relay daemon..."
+    systemctl --user start relay-daemon
+else
+    log "Warning: relay-daemon service not found. Start it manually."
+fi
+
+# ── Attach to session ────────────────────────────────────────────────
+exec tmux attach -t "$SESSION"
