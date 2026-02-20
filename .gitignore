@@ -1,3 +1,5 @@
 daemon/context-capture
 daemon/relay
 daemon/relay-daemon
+.beads/last_compact_offset_*
+state/

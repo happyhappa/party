@@ -10,6 +10,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Guard: must be run from the main checkout, never from a worktree
+MAIN_CHECKOUT="$HOME/Sandbox/personal/party"
+if [[ "$PROJECT_DIR" != "$MAIN_CHECKOUT" ]]; then
+    err "install.sh must be run from the main checkout ($MAIN_CHECKOUT)."
+    err "You are in: $PROJECT_DIR"
+    err "Running install.sh from a worktree publishes the wrong infra. Aborting."
+    exit 1
+fi
+
 # Configuration
 LLM_SHARE="$HOME/llm-share"
 CLAUDE_COMMANDS="$HOME/.claude/commands"
@@ -73,10 +82,10 @@ fi
 
 # 3. Install scripts
 info "Installing scripts..."
-cp "$SCRIPT_DIR/party-v2" "$BIN_DIR/party-v2"
-cp "$SCRIPT_DIR/s3-sync" "$BIN_DIR/s3-sync"
-chmod +x "$BIN_DIR/party-v2" "$BIN_DIR/s3-sync"
-log "  ✓ Scripts installed to $BIN_DIR"
+ln -sf "$SCRIPT_DIR/party-v2" "$BIN_DIR/party-v2"
+ln -sf "$MAIN_CHECKOUT/bin/party" "$BIN_DIR/party"
+[[ -f "$SCRIPT_DIR/s3-sync" ]] && ln -sf "$SCRIPT_DIR/s3-sync" "$BIN_DIR/s3-sync" || true
+log "  ✓ Scripts symlinked in $BIN_DIR (pointing to $MAIN_CHECKOUT)"
 
 # 4. Install Claude commands
 if [[ "$INSTALL_COMMANDS" == "true" ]]; then
