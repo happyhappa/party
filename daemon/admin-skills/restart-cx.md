@@ -14,15 +14,7 @@ if [[ -z "$CX_PANE" || "$CX_PANE" == "null" ]]; then
 fi
 ```
 
-### 2. Determine Project Directory
-Admin runs from `~/party/{project}/admin`, so the project directory is the parent:
-```bash
-PROJECT_DIR=$(dirname "$PWD")
-PROJECT_NAME=$(basename "$PROJECT_DIR")
-echo "Project: $PROJECT_NAME (dir: $PROJECT_DIR)"
-```
-
-### 3. Send Ctrl-C to Kill Current Process
+### 2. Send Ctrl-C to Kill Current Process
 ```bash
 tmux send-keys -t "$CX_PANE" C-c
 ```
