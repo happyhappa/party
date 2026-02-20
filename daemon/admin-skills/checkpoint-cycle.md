@@ -2,6 +2,23 @@ Dispatch a coordinated checkpoint cycle to all agent panes. This is invoked by t
 
 ## Steps
 
+### 0. Guard: skip if a checkpoint was dispatched recently
+
+Check the last dispatch time. If a checkpoint was dispatched within the last 8 minutes, skip this cycle entirely to prevent stacking:
+
+```bash
+LAST_DISPATCH=$(grep '"type":"checkpoint-cycle"' "$PWD/state/checkpoints.log" 2>/dev/null | tail -1 | jq -r '.timestamp // empty')
+if [[ -n "$LAST_DISPATCH" ]]; then
+  LAST_EPOCH=$(date -d "$LAST_DISPATCH" +%s 2>/dev/null || echo 0)
+  NOW_EPOCH=$(date +%s)
+  AGE=$(( NOW_EPOCH - LAST_EPOCH ))
+  if [[ $AGE -lt 480 ]]; then
+    echo "Checkpoint dispatched ${AGE}s ago, skipping."
+    exit 0
+  fi
+fi
+```
+
 ### 1. Read pane registry
 
 ```bash
