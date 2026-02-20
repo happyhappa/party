@@ -42,8 +42,8 @@ ADMIN_BEADS_DIR="${RELAY_ADMIN_BEADS_DIR:-$HOME/Sandbox/personal/new_party/oc-wt
 # Per-agent launch commands
 OC_CMD="${RELAY_OC_CMD:-claude -c --dangerously-skip-permissions}"
 CC_CMD="${RELAY_CC_CMD:-claude --dangerously-skip-permissions}"
-CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share --add-dir ~/.cache --add-dir ~/.local/share/relay/outbox/cx}"
-ADMIN_CMD="${RELAY_ADMIN_CMD:-export BEADS_DIR=$ADMIN_BEADS_DIR && claude -c --dangerously-skip-permissions}"
+CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share --add-dir ~/.cache}"
+ADMIN_CMD="${RELAY_ADMIN_CMD:-claude --model sonnet --tools \"Bash,Read,Glob\" --permission-mode bypassPermissions}"
 
 RELAY_LOG="$LLM_SHARE/relay/log/events.jsonl"
 
@@ -123,7 +123,7 @@ log "Launching agents with AGENT_ROLE set..."
 tmux send-keys -t "$OC_PANE" "export AGENT_ROLE=oc && $OC_CMD" Enter
 tmux send-keys -t "$CC_PANE" "export AGENT_ROLE=cc && $CC_CMD" Enter
 tmux send-keys -t "$CX_PANE" "export AGENT_ROLE=cx && $CX_CMD" Enter
-tmux send-keys -t "$ADMIN_PANE" "export AGENT_ROLE=admin && $ADMIN_CMD" Enter
+tmux send-keys -t "$ADMIN_PANE" "export AGENT_ROLE=admin && export BEADS_DIR=$ADMIN_BEADS_DIR && export PATH=\$HOME/go/bin:\$HOME/.local/bin:\$PATH && $ADMIN_CMD" Enter
 
 log ""
 log "Agents launched:"
@@ -132,6 +132,18 @@ log "  CC:    $CC_CMD (in $CC_DIR)"
 log "  CX:    $CX_CMD (in $CX_DIR)"
 log "  Admin: $ADMIN_CMD (in $ADMIN_DIR)"
 log ""
+
+# Install admin skills
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+ADMIN_SKILLS_DIR="$SCRIPT_DIR/../daemon/admin-skills"
+if [[ -d "$ADMIN_SKILLS_DIR" ]]; then
+    mkdir -p "$ADMIN_DIR/.claude/commands"
+    cp "$ADMIN_SKILLS_DIR"/*.md "$ADMIN_DIR/.claude/commands/" 2>/dev/null || true
+    if [[ -f "$ADMIN_DIR/.claude/commands/CLAUDE.md" ]]; then
+        mv "$ADMIN_DIR/.claude/commands/CLAUDE.md" "$ADMIN_DIR/CLAUDE.md"
+    fi
+    log "Admin skills installed"
+fi
 
 # Wait for agents to initialize before registering panes.
 # Codex takes ~10s to start; writing panes.json too early causes relay to
@@ -145,6 +157,16 @@ mkdir -p "$(dirname "$PANE_MAP")"
 log "Writing pane map to $PANE_MAP"
 printf '{"panes":{"oc":"%s","cc":"%s","cx":"%s","admin":"%s"},"version":1}\n' \
     "$OC_PANE" "$CC_PANE" "$CX_PANE" "$ADMIN_PANE" > "$PANE_MAP"
+
+# Start relay daemon if not running
+if ! pgrep -f relay-daemon &>/dev/null; then
+    if systemctl --user is-enabled relay-daemon &>/dev/null; then
+        systemctl --user start relay-daemon
+    else
+        relay-daemon &disown
+    fi
+    log "Relay daemon started"
+fi
 
 # Attach to session
 exec tmux attach -t "$SESSION"
