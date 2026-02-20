@@ -13,9 +13,9 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 # Guard: must be run from the main checkout, never from a worktree
 MAIN_CHECKOUT="$HOME/Sandbox/personal/party"
 if [[ "$PROJECT_DIR" != "$MAIN_CHECKOUT" ]]; then
-    err "install.sh must be run from the main checkout ($MAIN_CHECKOUT)."
-    err "You are in: $PROJECT_DIR"
-    err "Running install.sh from a worktree publishes the wrong infra. Aborting."
+    echo "[install] ERROR: must be run from the main checkout ($MAIN_CHECKOUT)." >&2
+    echo "[install] ERROR: You are in: $PROJECT_DIR" >&2
+    echo "[install] ERROR: Running install.sh from a worktree publishes the wrong infra. Aborting." >&2
     exit 1
 fi
 

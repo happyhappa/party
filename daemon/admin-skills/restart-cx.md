@@ -66,7 +66,7 @@ fi
 ### 5. Relaunch CX
 Send the launch command to the CX pane:
 ```bash
-tmux send-keys -t "$CX_PANE" "cd ~/party/${PROJECT_NAME}/cx && export AGENT_ROLE=cx && codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share --add-dir ~/.cache" Enter
+tmux send-keys -t "$CX_PANE" "export AGENT_ROLE=cx && codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share --add-dir ~/.cache" Enter
 ```
 
 ### 6. Log the Restart

@@ -34,10 +34,10 @@ CONFIG_FILE="$HOME/.config/relay/party.conf"
 OC_DIR="${RELAY_OC_DIR:-$(dirname "$PWD")}"
 CC_DIR="${RELAY_CC_DIR:-$PWD}"
 CX_DIR="${RELAY_CX_DIR:-$PWD}"
-ADMIN_DIR="${RELAY_ADMIN_DIR:-$HOME/party/new_party/admin}"
+ADMIN_DIR="${RELAY_ADMIN_DIR:-$HOME/party/$(basename "$PROJECT_DIR")/admin}"
 
 # BEADS_DIR for admin (must point to OC's .beads)
-ADMIN_BEADS_DIR="${RELAY_ADMIN_BEADS_DIR:-$HOME/Sandbox/personal/new_party/oc-wt/.beads}"
+ADMIN_BEADS_DIR="${RELAY_ADMIN_BEADS_DIR:-$OC_DIR/.beads}"
 
 # Per-agent launch commands
 OC_CMD="${RELAY_OC_CMD:-claude -c --dangerously-skip-permissions}"
