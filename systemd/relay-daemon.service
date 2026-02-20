@@ -8,6 +8,7 @@ ExecStart=/home/phileas/.local/bin/relay-daemon
 Restart=on-failure
 RestartSec=5
 Environment=HOME=/home/phileas
+Environment=PATH=/home/phileas/go/bin:/home/phileas/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=RELAY_PANE_TAIL_ENABLED=true
 Environment=RELAY_PROMPT_GATING=none
 

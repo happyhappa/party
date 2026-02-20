@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# party-v2 - Creates 3-tier tmux layout for LLM orchestration
+# party - Creates 3-tier tmux layout for LLM orchestration
 #
 # Layout:
 # ┌────────────┬────────────────────┐

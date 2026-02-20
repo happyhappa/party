@@ -41,10 +41,9 @@ Send a checkpoint request to each agent via direct tmux injection. Slash command
 PANES_JSON=$(cat ~/llm-share/relay/state/panes.json)
 OC_PANE=$(echo "$PANES_JSON" | jq -r '.panes.oc')
 CC_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cc')
-CX_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cx')
-tmux send-keys -t "$OC_PANE" "/checkpoint --respond $CHK_ID" Enter
-tmux send-keys -t "$CC_PANE" "/checkpoint --respond $CHK_ID" Enter
-tmux send-keys -t "$CX_PANE" "/prompts:checkpoint $CHK_ID" Enter
+tmux-inject "$OC_PANE" "/checkpoint --respond $CHK_ID"
+tmux-inject "$CC_PANE" "/checkpoint --respond $CHK_ID"
+cx-checkpoint-inject
 ```
 
 ### 4. Log the dispatch
