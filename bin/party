@@ -32,18 +32,18 @@ CONFIG_FILE="$HOME/.config/relay/party.conf"
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
 # Per-pane working directories
-OC_DIR="${RELAY_OC_DIR:-$PROJECT_DIR}"
-CC_DIR="${RELAY_CC_DIR:-$PROJECT_DIR}"
-CX_DIR="${RELAY_CX_DIR:-$PROJECT_DIR}"
+OC_DIR="${RELAY_OC_DIR:-$PROJECT_DIR/oc-wt}"
+CC_DIR="${RELAY_CC_DIR:-$PROJECT_DIR/cc-wt}"
+CX_DIR="${RELAY_CX_DIR:-$PROJECT_DIR/cx-wt}"
 ADMIN_DIR="${RELAY_ADMIN_DIR:-$HOME/party/$(basename "$PROJECT_DIR")/admin}"
 
 # BEADS_DIR for admin (must point to OC's .beads)
 ADMIN_BEADS_DIR="${RELAY_ADMIN_BEADS_DIR:-$OC_DIR/.beads}"
 
 # Per-agent launch commands
-OC_CMD="${RELAY_OC_CMD:-claude -c --dangerously-skip-permissions}"
-CC_CMD="${RELAY_CC_CMD:-claude --dangerously-skip-permissions}"
-CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share --add-dir ~/.cache}"
+OC_CMD="${RELAY_OC_CMD:-claude -c --model claude-opus-4-6 --dangerously-skip-permissions}"
+CC_CMD="${RELAY_CC_CMD:-claude --model claude-opus-4-6 --dangerously-skip-permissions}"
+CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share --add-dir ~/.cache --add-dir ~/.local/share/relay/outbox/cx}"
 ADMIN_CMD="${RELAY_ADMIN_CMD:-claude --model sonnet --tools \"Bash,Read,Glob\" --permission-mode bypassPermissions}"
 
 RELAY_LOG="$LLM_SHARE/relay/log/events.jsonl"
@@ -54,11 +54,11 @@ GREEN='\033[0;32m'
 NC='\033[0m' # No Color
 
 log() {
-    echo -e "${GREEN}[party-v2]${NC} $1"
+    echo -e "${GREEN}[party]${NC} $1"
 }
 
 err() {
-    echo -e "${RED}[party-v2]${NC} $1" >&2
+    echo -e "${RED}[party]${NC} $1" >&2
 }
 
 # Check if session already exists
@@ -114,6 +114,17 @@ tmux set-option -p -t "$ADMIN_PANE" @role admin
 # Select OC pane as default
 tmux select-pane -t "$OC_PANE"
 
+# Write project-dirs.json for relay-daemon idle detection (atomic write)
+dir_to_slug() { echo "-${1#/}" | tr '/_' '--'; }
+OC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$OC_DIR")"
+CC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$CC_DIR")"
+PROJECT_DIRS_JSON="$LLM_SHARE/relay/state/project-dirs.json"
+mkdir -p "$(dirname "$PROJECT_DIRS_JSON")"
+TMP_PROJ="$PROJECT_DIRS_JSON.tmp.$$"
+printf '{"oc":"%s","cc":"%s"}\n' "$OC_PROJECT_DIR" "$CC_PROJECT_DIR" > "$TMP_PROJ"
+mv "$TMP_PROJ" "$PROJECT_DIRS_JSON"
+log "Project dirs written to $PROJECT_DIRS_JSON"
+
 log "Layout created. Pane IDs:"
 tmux list-panes -t "$SESSION:main" -F "  #{pane_title}: #{pane_id}"
 
@@ -134,17 +145,18 @@ log "  CX:    $CX_CMD (in $CX_DIR)"
 log "  Admin: $ADMIN_CMD (in $ADMIN_DIR)"
 log ""
 
-# Install admin skills
-SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-ADMIN_SKILLS_DIR="$SCRIPT_DIR/../daemon/admin-skills"
-if [[ -d "$ADMIN_SKILLS_DIR" ]]; then
-    mkdir -p "$ADMIN_DIR/.claude/commands"
-    cp "$ADMIN_SKILLS_DIR"/*.md "$ADMIN_DIR/.claude/commands/" 2>/dev/null || true
-    if [[ -f "$ADMIN_DIR/.claude/commands/CLAUDE.md" ]]; then
-        mv "$ADMIN_DIR/.claude/commands/CLAUDE.md" "$ADMIN_DIR/CLAUDE.md"
-    fi
-    log "Admin skills installed"
+# Install admin skills from canonical location set up by install.sh
+ADMIN_SKILLS_SRC="$HOME/.party/admin-skills"
+if [[ ! -d "$ADMIN_SKILLS_SRC" ]]; then
+    err "Admin skills not found at $ADMIN_SKILLS_SRC — run install.sh first"
+    exit 1
 fi
+mkdir -p "$ADMIN_DIR/.claude/commands"
+cp "$ADMIN_SKILLS_SRC"/*.md "$ADMIN_DIR/.claude/commands/" 2>/dev/null || true
+if [[ -f "$ADMIN_DIR/.claude/commands/CLAUDE.md" ]]; then
+    mv "$ADMIN_DIR/.claude/commands/CLAUDE.md" "$ADMIN_DIR/CLAUDE.md"
+fi
+log "Admin skills installed from $ADMIN_SKILLS_SRC"
 
 # Wait for agents to initialize before registering panes.
 # Codex takes ~10s to start; writing panes.json too early causes relay to
