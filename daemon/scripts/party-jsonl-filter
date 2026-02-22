@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Any
 
-MAX_MESSAGE_CHARS = 3000
-MIN_MESSAGE_CHARS = 20
-MAX_OUTPUT_BYTES = 50 * 1024
+MAX_MESSAGE_CHARS = int(os.environ.get('PARTY_BRIEF_MAX_MSG_CHARS', 3000))
+MIN_MESSAGE_CHARS = int(os.environ.get('PARTY_BRIEF_MIN_MSG_CHARS', 20))
+MAX_OUTPUT_BYTES = int(os.environ.get('PARTY_BRIEF_MAX_OUTPUT_KB', 50)) * 1024
 
 
 def extract_text(content: Any) -> str:
