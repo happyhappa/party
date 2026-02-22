@@ -166,20 +166,14 @@ if ! pgrep -f relay-daemon &>/dev/null; then
     log "Relay daemon started"
 fi
 
-# Kill stale admin-loop if running
+# Kill stale admin-loop if running (pkill catches strays even without a valid PID file)
 ADMIN_PID_FILE="$RELAY_STATE_DIR/admin-loop.pid"
-if [[ -f "$ADMIN_PID_FILE" ]]; then
-    OLD_PID=$(cat "$ADMIN_PID_FILE")
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-        log "Killing stale admin-loop (pid=$OLD_PID)"
-        kill "$OLD_PID" 2>/dev/null || true
-        sleep 1
-    fi
-    rm -f "$ADMIN_PID_FILE"
-fi
+pkill -f admin-loop.sh 2>/dev/null || true
+rm -f "$ADMIN_PID_FILE"
 
 # Cleanup trap: kill admin-loop on session exit
 cleanup() {
+    pkill -f admin-loop.sh 2>/dev/null || true
     if [[ -f "$ADMIN_PID_FILE" ]]; then
         kill "$(cat "$ADMIN_PID_FILE")" 2>/dev/null || true
         rm -f "$ADMIN_PID_FILE"
