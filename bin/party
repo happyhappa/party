@@ -147,7 +147,7 @@ log ""
 # Codex takes ~10s to start; writing panes.json too early causes relay to
 # route messages to the zsh shell before Codex is running.
 log "Waiting 15s for agents to initialize..."
-sleep 15
+sleep 3
 
 # Write pane map for relay daemon (3 panes, no admin)
 PANE_MAP="$RELAY_STATE_DIR/panes.json"
