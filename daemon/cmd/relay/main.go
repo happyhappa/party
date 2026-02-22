@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/norm/relay-daemon/internal/adminpane"
 	"github.com/norm/relay-daemon/internal/checkpoint"
 	cfgpkg "github.com/norm/relay-daemon/internal/config"
 	inbox "github.com/norm/relay-daemon/internal/inbox"
@@ -59,7 +58,7 @@ func main() {
 	mux := tmuxpkg.New()
 	if err := cfg.LoadPaneMap(); err != nil {
 		log.Printf("warning: could not load pane map: %v (using defaults)", err)
-		cfg.PaneTargets = map[string]string{"oc": "%0", "cc": "%1", "admin": "%2", "cx": "%3"}
+		cfg.PaneTargets = map[string]string{"oc": "%0", "cc": "%1", "cx": "%2"}
 	}
 	injector := tmuxpkg.NewInjector(mux, cfg.PaneTargets)
 	injector.SetLogger(logger)
@@ -84,30 +83,10 @@ func main() {
 		log.Fatalf("watcher: %v", err)
 	}
 	defer watcher.Close()
-	if offsets, err := inbox.LoadOffsets(filepath.Join(cfg.ShareDir, "relay", "processed", "offsets.json")); err != nil {
+	if offsets, err := inbox.LoadOffsets(filepath.Join(cfg.StateDir, "offsets.json")); err != nil {
 		log.Printf("warning: failed to load offsets: %v", err)
 	} else {
 		watcher.SetOffsets(offsets)
-	}
-
-	// Admin pane (Addendum A)
-	var adminTimer *adminpane.AdminTimer
-	if adminPaneID, ok := cfg.PaneTargets["admin"]; ok {
-		log.Printf("admin pane enabled (pane %s)", adminPaneID)
-		adminTimer = adminpane.NewAdminTimer(injector, cfg, logger)
-
-		adminDir := filepath.Join(filepath.Dir(cfg.StateDir), "admin")
-		recycler := adminpane.NewRecycler(mux, cfg, logger, adminPaneID, adminDir)
-		adminTimer.SetRecycler(recycler)
-
-		// Idle detection
-		if len(cfg.ClaudeProjectDirs) > 0 {
-			idleDetector := adminpane.NewIdleDetector(cfg.ClaudeProjectDirs, cfg.IdleBackstopInterval)
-			adminTimer.SetIdleDetector(idleDetector)
-			log.Printf("idle detection enabled (%d project dirs, backstop %s)", len(cfg.ClaudeProjectDirs), cfg.IdleBackstopInterval)
-		}
-	} else {
-		log.Printf("warning: no 'admin' in pane map; admin timer disabled")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -133,16 +112,13 @@ func main() {
 			errCh <- err
 		}
 	}()
-	if adminTimer != nil {
-		go adminTimer.Start(ctx)
-	}
 	if paneTailer != nil {
 		go paneTailer.Start(ctx)
 	}
 
 	go func() {
 		<-ctx.Done()
-		offsetPath := filepath.Join(cfg.ShareDir, "relay", "processed", "offsets.json")
+		offsetPath := filepath.Join(cfg.StateDir, "offsets.json")
 		if err := watcher.SaveOffsets(offsetPath); err != nil {
 			log.Printf("warning: failed to save offsets: %v", err)
 		}
@@ -162,8 +138,8 @@ func main() {
 			}
 			_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeReceived, env.From, env.To).WithMsgID(env.MsgID))
 
-			// Handle checkpoint content directly so bead writing does not depend on
-			// admin-pane prompt state or legacy pending-request state machines.
+			// Handle checkpoint content directly in relay and write beads using
+			// single-writer daemon ownership.
 			if env.To == "admin" && env.Kind == "checkpoint_content" {
 				cc, err := checkpoint.Parse(env.Payload)
 				if err != nil {
@@ -190,7 +166,7 @@ func main() {
 					_ = logger.Log(logpkg.NewEvent("checkpoint_bead_error", env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithError(err.Error()))
 					continue
 				}
-				_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeCheckpointAck, env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithStatus("written:"+beadID))
+				_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeCheckpointAck, env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithStatus("written:" + beadID))
 				continue
 			}
 
