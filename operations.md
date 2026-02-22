@@ -25,7 +25,7 @@ systemctl --user --version  # systemd with user services
 
 ### Build Relay Daemon
 ```bash
-cd ~/Sandbox/personal/party/daemon
+cd daemon
 go build -o ~/.local/bin/relay-daemon ./cmd/relay
 ```
 
@@ -36,7 +36,7 @@ GOCACHE=/tmp/go-build-cache go build -o ~/.local/bin/relay-daemon ./cmd/relay
 
 ### Run Tests
 ```bash
-cd ~/Sandbox/personal/party/daemon
+cd daemon
 go test ./...
 ```
 
@@ -46,7 +46,7 @@ go test ./...
 
 ### Option A: Automated Install
 ```bash
-cd ~/Sandbox/personal/party/daemon/scripts
+cd daemon/scripts
 ./install.sh
 ```
 
@@ -64,15 +64,14 @@ mkdir -p ~/.local/bin
 
 #### 3.2 Initialize State Files
 ```bash
-echo '{}' > ~/llm-share/relay/processed/offsets.json
 echo '{}' > ~/llm-share/relay/state/agents.json
 touch ~/llm-share/relay/state/{checkpoint.json,handoff-marker,health.json}
 ```
 
 #### 3.3 Install CLI Tools
 ```bash
-cp ~/Sandbox/personal/party/bin/relay ~/.local/bin/relay
-cp ~/Sandbox/personal/party/bin/party ~/.local/bin/party
+cp bin/relay ~/.local/bin/relay
+cp bin/party ~/.local/bin/party
 chmod +x ~/.local/bin/{relay,party}
 ```
 
@@ -120,46 +119,39 @@ relay-daemon
 
 ### Start Party Session
 ```bash
-party-v2 [session-name] [project-dir]
+party [session-name] [project-dir]
 ```
 
 Default session name is `party`. The script:
-1. Creates 4-pane tmux layout: OC (40% left) | CC (top right 50%) / Admin (bottom right 50%) + hidden CX window
-2. Creates per-pane directories under `~/party/{project}/{oc,cc,admin,cx}/`
-3. Installs admin skills from `daemon/admin-skills/` into `admin/.claude/commands/`
-4. Sets `AGENT_ROLE` environment variable per pane (oc, cc, admin, cx)
-5. Writes pane map (v2 format) to `~/llm-share/relay/state/panes.json`
-6. Auto-launches Admin agent with `claude -c --dangerously-skip-permissions`
+1. Creates 3-pane tmux layout: OC (50% left) | CC (top right) / CX (bottom right)
+2. Sets `AGENT_ROLE` environment variable per pane (oc, cc, cx)
+3. Writes pane map to `~/llm-share/relay/state/panes.json`
+4. Starts `admin-loop.sh` as a background process for checkpoint/health orchestration
 
 ### Pane Layout
 ```
 ┌────────────┬────────────────────┐
 │            │     CC (50%)       │
-│  OC (40%)  ├────────────────────┤
-│            │   Admin (50%)      │
+│  OC (50%)  ├────────────────────┤
+│            │     CX (50%)      │
 └────────────┴────────────────────┘
-+ hidden tmux window "cx" for CX agent
 ```
 
-### Admin Pane
-The Admin agent handles orchestration tasks injected by the relay daemon:
-- **`/checkpoint-cycle`** — Dispatches coordinated checkpoints to OC, CC, CX (every 10m)
-- **`/health-check`** — Heuristic health monitoring of all agent panes (every 5m)
-- **`/register-panes`** — Discovers and writes tmux pane map
-- **`/restart-cx`** — Restarts CX agent if detected dead
-- **`/status`** — Quick system status summary
+### Admin Loop
+The `admin-loop.sh` background process replaces the former admin LLM pane:
+- **Checkpoint cycle** (every 10min) — Injects `/checkpoint --respond` into OC/CC, `/prompts:checkpoint` into CX
+- **Health check** (every 5min) — Heuristic monitoring, auto-restart CX if dead, auto-compact CX at low context
+- **Register panes** — Discovers tmux pane IDs via `@role` options
+- Logs to `~/llm-share/relay/log/admin-loop.log`
+- PID written to `~/llm-share/relay/state/admin-loop.pid`
 
-Admin is recycled by the relay daemon via Prestige (capture last-life.txt, /exit, relaunch) after a configurable number of cycles or max uptime.
-
-### Admin Environment Variables
+### Admin Loop Environment Variables
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RELAY_CHECKPOINT_INTERVAL` | `10m` | Checkpoint cycle frequency |
-| `RELAY_HEALTH_CHECK_INTERVAL` | `5m` | Health check frequency |
-| `RELAY_ADMIN_RECYCLE_AFTER_CYCLES` | `6` | Recycle admin after N checkpoint cycles |
-| `RELAY_ADMIN_MAX_UPTIME` | `2h` | Max admin uptime before forced recycle |
+| `RELAY_CHECKPOINT_INTERVAL` | `600` (10m) | Checkpoint cycle frequency (seconds) |
+| `RELAY_HEALTH_CHECK_INTERVAL` | `300` (5m) | Health check frequency (seconds) |
+| `RELAY_STATE_DIR` | `~/llm-share/relay/state` | State directory |
 | `RELAY_ADMIN_ALERT_HOOK` | (empty) | Shell command to invoke on anomaly |
-| `RELAY_ADMIN_RELAUNCH_CMD` | `claude --dangerously-skip-permissions` | Command to relaunch admin after recycle |
 
 ---
 
@@ -191,7 +183,7 @@ cat ~/llm-share/relay/outbox/oc/*.msg
 In each agent pane:
 ```bash
 echo $AGENT_ROLE
-# Should output: oc, cc, admin, or cx
+# Should output: oc, cc, or cx
 ```
 
 ### Check Event Log
@@ -251,18 +243,8 @@ tmux display-message -p -t %0 '#{@role}'  # Should show: oc
 ### Stale Pane Mapping
 If tmux session was recreated without updating panes.json:
 ```bash
-# In the admin pane, run:
-/register-panes
-
-# Or manually regenerate:
-OC_PANE=$(tmux display-message -p -t party:main.0 '#{pane_id}')
-CC_PANE=$(tmux display-message -p -t party:main.1 '#{pane_id}')
-ADMIN_PANE=$(tmux display-message -p -t party:main.2 '#{pane_id}')
-CX_PANE=$(tmux list-panes -t party:cx -F '#{pane_id}' | head -1)
-
-jq -n --arg oc "$OC_PANE" --arg cc "$CC_PANE" --arg admin "$ADMIN_PANE" --arg cx "$CX_PANE" \
-  '{"panes":{"oc":$oc,"cc":$cc,"admin":$admin,"cx":$cx},"version":1,"registered_at":now|strftime("%Y-%m-%dT%H:%M:%SZ")}' \
-  > ~/llm-share/relay/state/panes.json
+# Run the register-panes script:
+admin-register-panes.sh
 
 # Restart daemon
 systemctl --user restart relay-daemon
@@ -277,12 +259,12 @@ chmod 755 ~/llm-share/relay/outbox/{oc,cc,cx,admin}
 chmod 644 ~/llm-share/relay/state/*.json
 ```
 
-### Admin Not Receiving Skills
-If admin pane doesn't respond to `/checkpoint-cycle` or `/health-check`:
-1. Check admin skills are installed: `ls ~/party/{project}/admin/.claude/commands/`
-2. Check relay daemon is routing to admin: `journalctl --user -u relay-daemon | grep admin`
-3. Verify panes.json has admin pane: `jq .panes.admin ~/llm-share/relay/state/panes.json`
-4. Re-register panes if needed: run `/register-panes` in admin pane
+### Admin Loop Not Running
+If checkpoints/health checks aren't firing:
+1. Check PID file: `cat ~/llm-share/relay/state/admin-loop.pid`
+2. Check if process is alive: `ps -p $(cat ~/llm-share/relay/state/admin-loop.pid)`
+3. Check logs: `tail -50 ~/llm-share/relay/log/admin-loop.log`
+4. Restart manually: `admin-loop.sh >> ~/llm-share/relay/log/admin-loop.log 2>&1 & disown`
 
 ---
 
@@ -290,11 +272,10 @@ If admin pane doesn't respond to `/checkpoint-cycle` or `/health-check`:
 
 | Command | Description |
 |---------|-------------|
-| `party-v2 [session] [project-dir]` | Start/attach to party session (4-pane layout) |
-| `relay send <to> "msg"` | Send message to agent (oc, cc, cx, admin, all) |
+| `party [session] [project-dir]` | Start/attach to party session (3-pane layout) |
+| `relay send <to> "msg"` | Send message to agent (oc, cc, cx, all) |
 | `systemctl --user start relay-daemon` | Start daemon |
 | `systemctl --user status relay-daemon` | Check daemon status |
 | `journalctl --user -u relay-daemon -f` | Follow daemon logs |
 | `jq . ~/llm-share/relay/state/panes.json` | View pane mapping (v2 format) |
-| `/status` (in admin pane) | Quick system health summary |
-| `/register-panes` (in admin pane) | Re-discover and write pane map |
+| `admin-register-panes.sh` | Re-discover and write pane map |

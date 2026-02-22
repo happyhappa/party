@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# party-v2 - Creates 3-tier tmux layout for LLM orchestration
+# party - Creates 3-tier tmux layout for LLM orchestration
 #
 # Layout:
 # ┌────────────┬────────────────────┐
@@ -24,6 +24,7 @@
 set -euo pipefail
 
 SESSION="${1:-party}"
+PROJECT_DIR="${2:-$PWD}"
 LLM_SHARE="$HOME/llm-share"
 CONFIG_FILE="$HOME/.config/relay/party.conf"
 
@@ -31,21 +32,24 @@ CONFIG_FILE="$HOME/.config/relay/party.conf"
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
 # Per-pane working directories
-OC_DIR="${RELAY_OC_DIR:-$(dirname "$PWD")}"
-CC_DIR="${RELAY_CC_DIR:-$PWD}"
-CX_DIR="${RELAY_CX_DIR:-$PWD}"
-ADMIN_DIR="${RELAY_ADMIN_DIR:-$HOME/party/new_party/admin}"
-
-# BEADS_DIR for admin (must point to OC's .beads)
-ADMIN_BEADS_DIR="${RELAY_ADMIN_BEADS_DIR:-$HOME/Sandbox/personal/new_party/oc-wt/.beads}"
+OC_DIR="${RELAY_OC_DIR:-$PROJECT_DIR/oc-wt}"
+CC_DIR="${RELAY_CC_DIR:-$PROJECT_DIR/cc-wt}"
+CX_DIR="${RELAY_CX_DIR:-$PROJECT_DIR/cx-wt}"
 
 # Per-agent launch commands
-OC_CMD="${RELAY_OC_CMD:-claude -c --dangerously-skip-permissions}"
-CC_CMD="${RELAY_CC_CMD:-claude --dangerously-skip-permissions}"
+OC_CMD="${RELAY_OC_CMD:-claude -c --model claude-opus-4-6 --dangerously-skip-permissions}"
+CC_CMD="${RELAY_CC_CMD:-claude --model claude-opus-4-6 --dangerously-skip-permissions}"
 CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share --add-dir ~/.cache --add-dir ~/.local/share/relay/outbox/cx}"
-ADMIN_CMD="${RELAY_ADMIN_CMD:-export BEADS_DIR=$ADMIN_BEADS_DIR && claude -c --dangerously-skip-permissions}"
 
 RELAY_LOG="$LLM_SHARE/relay/log/events.jsonl"
+RELAY_STATE_DIR="$LLM_SHARE/relay/state"
+
+# Resolve admin-loop.sh path (follows symlinks to find the real script dir)
+ADMIN_LOOP="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../daemon/scripts/admin/admin-loop.sh"
+if [[ ! -x "$ADMIN_LOOP" ]]; then
+    # Fallback: check ~/.local/bin symlink target
+    ADMIN_LOOP="$HOME/.local/bin/admin-loop.sh"
+fi
 
 # Colors for status
 RED='\033[0;31m'
@@ -53,11 +57,11 @@ GREEN='\033[0;32m'
 NC='\033[0m' # No Color
 
 log() {
-    echo -e "${GREEN}[party-v2]${NC} $1"
+    echo -e "${GREEN}[party]${NC} $1"
 }
 
 err() {
-    echo -e "${RED}[party-v2]${NC} $1" >&2
+    echo -e "${RED}[party]${NC} $1" >&2
 }
 
 # Check if session already exists
@@ -70,15 +74,13 @@ fi
 mkdir -p "$(dirname "$RELAY_LOG")"
 touch "$RELAY_LOG"
 
-log "Creating session '$SESSION' with 3-tier layout..."
+log "Creating session '$SESSION' with 3-pane layout..."
 
 # Layout:
 # ┌──────────┬──────────────────┐
-# │          │   CC  (33%)      │
+# │          │   CC  (50%)      │
 # │   OC     ├──────────────────┤
-# │  (50%)   │   CX  (33%)      │
-# │          ├──────────────────┤
-# │          │  Admin (33%)     │
+# │  (50%)   │   CX  (50%)     │
 # └──────────┴──────────────────┘
 
 # Create session with OC pane (left side)
@@ -88,30 +90,36 @@ OC_PANE=$(tmux display-message -p -t "$SESSION:main" '#{pane_id}')
 # Split right column at 50% width — new pane is CC
 CC_PANE=$(tmux split-window -h -l 50% -t "$OC_PANE" -c "$CC_DIR" -P -F '#{pane_id}')
 
-# Split CC vertically: bottom 33% becomes Admin
-ADMIN_PANE=$(tmux split-window -v -l 33% -t "$CC_PANE" -c "$ADMIN_DIR" -P -F '#{pane_id}')
-
-# Split CC (now top 67% of right) in half: bottom half becomes CX (33% of right)
+# Split CC vertically: bottom 50% becomes CX
 CX_PANE=$(tmux split-window -v -l 50% -t "$CC_PANE" -c "$CX_DIR" -P -F '#{pane_id}')
 
 # Name panes
 tmux select-pane -t "$OC_PANE" -T "OC"
 tmux select-pane -t "$CC_PANE" -T "CC"
 tmux select-pane -t "$CX_PANE" -T "CX"
-tmux select-pane -t "$ADMIN_PANE" -T "Admin"
 
 # Set pane border format to show titles
 tmux set-option -t "$SESSION" pane-border-status top
 tmux set-option -t "$SESSION" pane-border-format " #{pane_title} "
 
-# Set @role pane options (backup identification)
+# Set @role pane options (used by admin-register-panes.sh for identification)
 tmux set-option -p -t "$OC_PANE" @role oc
 tmux set-option -p -t "$CC_PANE" @role cc
 tmux set-option -p -t "$CX_PANE" @role cx
-tmux set-option -p -t "$ADMIN_PANE" @role admin
 
 # Select OC pane as default
 tmux select-pane -t "$OC_PANE"
+
+# Write project-dirs.json for relay-daemon idle detection (atomic write)
+dir_to_slug() { echo "-${1#/}" | tr '/_' '--'; }
+OC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$OC_DIR")"
+CC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$CC_DIR")"
+PROJECT_DIRS_JSON="$LLM_SHARE/relay/state/project-dirs.json"
+mkdir -p "$(dirname "$PROJECT_DIRS_JSON")"
+TMP_PROJ="$PROJECT_DIRS_JSON.tmp.$$"
+printf '{"oc":"%s","cc":"%s"}\n' "$OC_PROJECT_DIR" "$CC_PROJECT_DIR" > "$TMP_PROJ"
+mv "$TMP_PROJ" "$PROJECT_DIRS_JSON"
+log "Project dirs written to $PROJECT_DIRS_JSON"
 
 log "Layout created. Pane IDs:"
 tmux list-panes -t "$SESSION:main" -F "  #{pane_title}: #{pane_id}"
@@ -123,14 +131,12 @@ log "Launching agents with AGENT_ROLE set..."
 tmux send-keys -t "$OC_PANE" "export AGENT_ROLE=oc && $OC_CMD" Enter
 tmux send-keys -t "$CC_PANE" "export AGENT_ROLE=cc && $CC_CMD" Enter
 tmux send-keys -t "$CX_PANE" "export AGENT_ROLE=cx && $CX_CMD" Enter
-tmux send-keys -t "$ADMIN_PANE" "export AGENT_ROLE=admin && $ADMIN_CMD" Enter
 
 log ""
 log "Agents launched:"
 log "  OC:    $OC_CMD (in $OC_DIR)"
 log "  CC:    $CC_CMD (in $CC_DIR)"
 log "  CX:    $CX_CMD (in $CX_DIR)"
-log "  Admin: $ADMIN_CMD (in $ADMIN_DIR)"
 log ""
 
 # Wait for agents to initialize before registering panes.
@@ -139,12 +145,30 @@ log ""
 log "Waiting 15s for agents to initialize..."
 sleep 15
 
-# Write pane map for relay daemon
-PANE_MAP="$LLM_SHARE/relay/state/panes.json"
-mkdir -p "$(dirname "$PANE_MAP")"
+# Write pane map for relay daemon (3 panes, no admin)
+PANE_MAP="$RELAY_STATE_DIR/panes.json"
+mkdir -p "$RELAY_STATE_DIR"
 log "Writing pane map to $PANE_MAP"
-printf '{"panes":{"oc":"%s","cc":"%s","cx":"%s","admin":"%s"},"version":1}\n' \
-    "$OC_PANE" "$CC_PANE" "$CX_PANE" "$ADMIN_PANE" > "$PANE_MAP"
+printf '{"panes":{"oc":"%s","cc":"%s","cx":"%s"},"version":1,"registered_at":"%s"}\n' \
+    "$OC_PANE" "$CC_PANE" "$CX_PANE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PANE_MAP"
+
+# Start relay daemon if not running
+if ! pgrep -f relay-daemon &>/dev/null; then
+    if systemctl --user is-enabled relay-daemon &>/dev/null; then
+        systemctl --user start relay-daemon
+    else
+        relay-daemon &disown
+    fi
+    log "Relay daemon started"
+fi
+
+# Start admin loop as background process
+if [[ -x "$ADMIN_LOOP" ]]; then
+    RELAY_STATE_DIR="$RELAY_STATE_DIR" "$ADMIN_LOOP" >> "$LLM_SHARE/relay/log/admin-loop.log" 2>&1 & disown
+    log "Admin loop started (pid=$!, log=$LLM_SHARE/relay/log/admin-loop.log)"
+else
+    err "Admin loop not found at $ADMIN_LOOP — run install.sh first"
+fi
 
 # Attach to session
 exec tmux attach -t "$SESSION"

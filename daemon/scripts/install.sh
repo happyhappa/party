@@ -10,6 +10,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Guard: must be run from the main checkout, never from a worktree
+MAIN_CHECKOUT="$HOME/Sandbox/personal/party"
+if [[ "$(dirname "$PROJECT_DIR")" != "$MAIN_CHECKOUT" ]]; then
+    echo "[install] ERROR: must be run from the main checkout ($MAIN_CHECKOUT)." >&2
+    echo "[install] ERROR: You are in: $PROJECT_DIR" >&2
+    echo "[install] ERROR: Running install.sh from a worktree publishes the wrong infra. Aborting." >&2
+    exit 1
+fi
+
 # Configuration
 LLM_SHARE="$HOME/llm-share"
 CLAUDE_COMMANDS="$HOME/.claude/commands"
@@ -51,7 +60,6 @@ mkdir -p "$LLM_SHARE"/{relay/{outbox/{oc,cc,cx},processed,log,state/locks},attac
 mkdir -p "$BIN_DIR"
 
 # Initialize state files if missing
-[[ -f "$LLM_SHARE/relay/processed/offsets.json" ]] || echo '{}' > "$LLM_SHARE/relay/processed/offsets.json"
 [[ -f "$LLM_SHARE/relay/state/agents.json" ]] || echo '{}' > "$LLM_SHARE/relay/state/agents.json"
 
 # Placeholder files for Phase 3b
@@ -73,10 +81,49 @@ fi
 
 # 3. Install scripts
 info "Installing scripts..."
-cp "$SCRIPT_DIR/party-v2" "$BIN_DIR/party-v2"
-cp "$SCRIPT_DIR/s3-sync" "$BIN_DIR/s3-sync"
-chmod +x "$BIN_DIR/party-v2" "$BIN_DIR/s3-sync"
-log "  ✓ Scripts installed to $BIN_DIR"
+ln -sf "$MAIN_CHECKOUT/bin/party" "$BIN_DIR/party"
+[[ -f "$SCRIPT_DIR/s3-sync" ]] && ln -sf "$SCRIPT_DIR/s3-sync" "$BIN_DIR/s3-sync" || true
+log "  ✓ Scripts symlinked in $BIN_DIR (pointing to $MAIN_CHECKOUT)"
+
+# 3a. Deploy wrapper scripts
+for script in cx-checkpoint-inject tmux-inject; do
+    if [[ -f "$SCRIPT_DIR/$script" ]]; then
+        chmod +x "$SCRIPT_DIR/$script"
+        ln -sf "$SCRIPT_DIR/$script" "$BIN_DIR/$script"
+        log "  ✓ $script symlinked in $BIN_DIR"
+    else
+        warn "  ⚠ $script not found in $SCRIPT_DIR, skipping"
+    fi
+done
+
+# 3c. Deploy relay CLI and wrappers
+ln -sf "$MAIN_CHECKOUT/bin/relay" "$BIN_DIR/relay"
+for script in relay-cx; do
+    if [[ -f "$SCRIPT_DIR/$script" ]]; then
+        chmod +x "$SCRIPT_DIR/$script"
+        ln -sf "$SCRIPT_DIR/$script" "$BIN_DIR/$script"
+        log "  ✓ $script symlinked in $BIN_DIR"
+    else
+        warn "  ⚠ $script not found in $SCRIPT_DIR, skipping"
+    fi
+done
+
+# 3d. Deploy pre-compact support scripts
+ln -sf "$SCRIPT_DIR/party-jsonl-filter" "$BIN_DIR/party-jsonl-filter"
+ln -sf "$SCRIPT_DIR/party-brief-prompt.txt" "$BIN_DIR/party-brief-prompt.txt"
+log "  ✓ Pre-compact support scripts symlinked"
+
+# 3e. Deploy admin loop scripts
+ADMIN_SCRIPT_DIR="$SCRIPT_DIR/admin"
+for script in admin-loop.sh admin-checkpoint-cycle.sh admin-health-check.sh admin-restart-cx.sh admin-register-panes.sh; do
+    if [[ -f "$ADMIN_SCRIPT_DIR/$script" ]]; then
+        chmod +x "$ADMIN_SCRIPT_DIR/$script"
+        ln -sf "$ADMIN_SCRIPT_DIR/$script" "$BIN_DIR/$script"
+        log "  ✓ $script symlinked in $BIN_DIR"
+    else
+        warn "  ⚠ $script not found in $ADMIN_SCRIPT_DIR, skipping"
+    fi
+done
 
 # 4. Install Claude commands
 if [[ "$INSTALL_COMMANDS" == "true" ]]; then
@@ -151,11 +198,27 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     info "  Add to your shell profile: export PATH=\"\$PATH:$BIN_DIR\""
 fi
 
+# 7. Verify no standalone drift
+info "Verifying symlinks..."
+DRIFT=0
+for script in party relay tmux-inject cx-checkpoint-inject s3-sync relay-cx party-jsonl-filter party-brief-prompt.txt admin-loop.sh admin-checkpoint-cycle.sh admin-health-check.sh admin-restart-cx.sh admin-register-panes.sh; do
+    target="$BIN_DIR/$script"
+    if [[ -f "$target" && ! -L "$target" ]]; then
+        warn "  DRIFT: $target is a standalone copy, not a symlink"
+        DRIFT=1
+    fi
+done
+if [[ $DRIFT -eq 1 ]]; then
+    err "  Run install.sh again to fix drifted scripts"
+else
+    log "  ✓ All scripts are symlinks — no drift detected"
+fi
+
 echo ""
 log "Installation complete!"
 echo ""
 info "Next steps:"
-info "  1. Start tmux layout:    party-v2"
+info "  1. Start tmux layout:    party"
 info "  2. Start relay daemon:   relay-daemon (or systemctl --user start relay-daemon)"
 info "  3. Start S3 sync:        s3-sync --daemon (or systemctl --user start s3-sync)"
 echo ""

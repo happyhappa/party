@@ -38,3 +38,9 @@ bd sync               # Sync with git
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 
+
+## Infrastructure Rule
+
+Files in `daemon/`, `bin/`, `systemd/` are infrastructure. You CAN edit them here — they merge to main like any other change, and `install.sh` deploys them system-wide.
+
+Do NOT run `install.sh` from this worktree — it deploys from main after merge.
