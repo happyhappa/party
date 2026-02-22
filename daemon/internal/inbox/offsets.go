@@ -16,6 +16,9 @@ func LoadOffsets(path string) (map[string]int64, error) {
 		}
 		return nil, err
 	}
+	if len(data) == 0 {
+		return make(map[string]int64), nil
+	}
 
 	var offsets map[string]int64
 	if err := json.Unmarshal(data, &offsets); err != nil {

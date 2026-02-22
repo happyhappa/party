@@ -7,50 +7,36 @@ import (
 	"time"
 )
 
-func TestDefaultAdminFields(t *testing.T) {
+func TestDefaultDurations(t *testing.T) {
 	cfg := Default()
-	if cfg.CheckpointInterval != 10*time.Minute {
-		t.Errorf("CheckpointInterval = %v, want 10m", cfg.CheckpointInterval)
+	if cfg.StuckThreshold != 5*time.Minute {
+		t.Errorf("StuckThreshold = %v, want 5m", cfg.StuckThreshold)
 	}
-	if cfg.HealthCheckInterval != 5*time.Minute {
-		t.Errorf("HealthCheckInterval = %v, want 5m", cfg.HealthCheckInterval)
+	if cfg.NagInterval != 5*time.Minute {
+		t.Errorf("NagInterval = %v, want 5m", cfg.NagInterval)
 	}
-	if cfg.AdminRecycleCycles != 6 {
-		t.Errorf("AdminRecycleCycles = %d, want 6", cfg.AdminRecycleCycles)
-	}
-	if cfg.AdminMaxUptime != 2*time.Hour {
-		t.Errorf("AdminMaxUptime = %v, want 2h", cfg.AdminMaxUptime)
-	}
-	if cfg.AdminAlertHook != "" {
-		t.Errorf("AdminAlertHook = %q, want empty", cfg.AdminAlertHook)
+	if cfg.MaxNagDuration != 30*time.Minute {
+		t.Errorf("MaxNagDuration = %v, want 30m", cfg.MaxNagDuration)
 	}
 }
 
-func TestLoadAdminEnvOverrides(t *testing.T) {
-	t.Setenv("RELAY_CHECKPOINT_INTERVAL", "15m")
-	t.Setenv("RELAY_HEALTH_CHECK_INTERVAL", "3m")
-	t.Setenv("RELAY_ADMIN_RECYCLE_AFTER_CYCLES", "10")
-	t.Setenv("RELAY_ADMIN_MAX_UPTIME", "1h")
-	t.Setenv("RELAY_ADMIN_ALERT_HOOK", "/usr/local/bin/alert.sh")
+func TestLoadDurationEnvOverrides(t *testing.T) {
+	t.Setenv("RELAY_STUCK_THRESHOLD", "7m")
+	t.Setenv("RELAY_NAG_INTERVAL", "2m")
+	t.Setenv("RELAY_MAX_NAG_DURATION", "20m")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.CheckpointInterval != 15*time.Minute {
-		t.Errorf("CheckpointInterval = %v, want 15m", cfg.CheckpointInterval)
+	if cfg.StuckThreshold != 7*time.Minute {
+		t.Errorf("StuckThreshold = %v, want 7m", cfg.StuckThreshold)
 	}
-	if cfg.HealthCheckInterval != 3*time.Minute {
-		t.Errorf("HealthCheckInterval = %v, want 3m", cfg.HealthCheckInterval)
+	if cfg.NagInterval != 2*time.Minute {
+		t.Errorf("NagInterval = %v, want 2m", cfg.NagInterval)
 	}
-	if cfg.AdminRecycleCycles != 10 {
-		t.Errorf("AdminRecycleCycles = %d, want 10", cfg.AdminRecycleCycles)
-	}
-	if cfg.AdminMaxUptime != 1*time.Hour {
-		t.Errorf("AdminMaxUptime = %v, want 1h", cfg.AdminMaxUptime)
-	}
-	if cfg.AdminAlertHook != "/usr/local/bin/alert.sh" {
-		t.Errorf("AdminAlertHook = %q, want /usr/local/bin/alert.sh", cfg.AdminAlertHook)
+	if cfg.MaxNagDuration != 20*time.Minute {
+		t.Errorf("MaxNagDuration = %v, want 20m", cfg.MaxNagDuration)
 	}
 }
 

@@ -12,39 +12,26 @@ import (
 
 // Config holds relay daemon configuration.
 type Config struct {
-	ShareDir          string
-	InboxDir          string
-	LogDir            string
-	StateDir          string
-	AttacksDir        string
-	StuckThreshold    time.Duration
-	NagInterval       time.Duration
-	MaxNagDuration    time.Duration
-	TmuxSession       string
-	PaneMapPath       string
-	PaneTargets       map[string]string
-	PromptGating      string
-	QueueMaxAge       time.Duration
-	PaneTailEnabled   bool
-	PaneTailInterval  time.Duration
-	PaneTailLines     int
-	PaneTailRotations int
-	PaneTailDir       string
-
-	// Admin pane (Addendum A)
-	CheckpointInterval   time.Duration
-	HealthCheckInterval  time.Duration
-	AdminRecycleCycles   int
-	AdminMaxUptime       time.Duration
-	AdminAlertHook       string
-	AdminRelaunchCmd     string
-	PaneMapVersion       int
-	PaneMapRegisteredAt  string
-
-	// Idle detection
-	ClaudeProjectDirs    map[string]string // role → ~/.claude/projects/{slug}/ dir
-	IdleBackstopInterval time.Duration     // max time between checkpoint injections even when idle
-	DeadmanThreshold     time.Duration     // fixed threshold for admin deadman detection
+	ShareDir            string
+	InboxDir            string
+	LogDir              string
+	StateDir            string
+	AttacksDir          string
+	StuckThreshold      time.Duration
+	NagInterval         time.Duration
+	MaxNagDuration      time.Duration
+	TmuxSession         string
+	PaneMapPath         string
+	PaneTargets         map[string]string
+	PromptGating        string
+	QueueMaxAge         time.Duration
+	PaneTailEnabled     bool
+	PaneTailInterval    time.Duration
+	PaneTailLines       int
+	PaneTailRotations   int
+	PaneTailDir         string
+	PaneMapVersion      int
+	PaneMapRegisteredAt string
 }
 
 // Default returns the default configuration.
@@ -70,18 +57,6 @@ func Default() *Config {
 		PaneTailLines:     150,
 		PaneTailRotations: 7,
 		PaneTailDir:       filepath.Join(shareDir, "relay", "pane-tails"),
-
-		// Admin pane defaults
-		CheckpointInterval:  10 * time.Minute,
-		HealthCheckInterval: 5 * time.Minute,
-		AdminRecycleCycles:  6,
-		AdminMaxUptime:      2 * time.Hour,
-		AdminRelaunchCmd:    "claude --dangerously-skip-permissions",
-
-		// Idle detection defaults
-		ClaudeProjectDirs:    map[string]string{},
-		IdleBackstopInterval: 2 * time.Hour,
-		DeadmanThreshold:     10 * time.Minute,
 	}
 }
 
@@ -107,24 +82,6 @@ func Load() (*Config, error) {
 
 	cfg.PromptGating = envOr(cfg.PromptGating, "RELAY_PROMPT_GATING")
 	overrideDuration(&cfg.QueueMaxAge, "RELAY_QUEUE_MAX_AGE")
-
-	// Admin pane env var overrides
-	overrideDuration(&cfg.CheckpointInterval, "RELAY_CHECKPOINT_INTERVAL")
-	overrideDuration(&cfg.HealthCheckInterval, "RELAY_HEALTH_CHECK_INTERVAL")
-	overrideInt(&cfg.AdminRecycleCycles, "RELAY_ADMIN_RECYCLE_AFTER_CYCLES")
-	overrideDuration(&cfg.AdminMaxUptime, "RELAY_ADMIN_MAX_UPTIME")
-	overrideString(&cfg.AdminAlertHook, "RELAY_ADMIN_ALERT_HOOK")
-	overrideString(&cfg.AdminRelaunchCmd, "RELAY_ADMIN_RELAUNCH_CMD")
-
-	// Idle detection
-	for _, role := range []string{"oc", "cc", "cx"} {
-		envKey := "RELAY_PROJECT_DIR_" + strings.ToUpper(role)
-		if val := os.Getenv(envKey); val != "" {
-			cfg.ClaudeProjectDirs[role] = val
-		}
-	}
-	overrideDuration(&cfg.IdleBackstopInterval, "RELAY_IDLE_BACKSTOP_INTERVAL")
-	overrideDuration(&cfg.DeadmanThreshold, "RELAY_DEADMAN_THRESHOLD")
 
 	return cfg, nil
 }
