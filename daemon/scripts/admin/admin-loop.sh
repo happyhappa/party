@@ -36,8 +36,9 @@ trap cleanup EXIT SIGTERM SIGINT
 
 log "Started (pid=$$, checkpoint=${CHECKPOINT_INTERVAL}s, health=${HEALTH_CHECK_INTERVAL}s)"
 
-LAST_CHECKPOINT=0
-LAST_HEALTH_CHECK=0
+# Initialize to now so first cycle waits a full interval
+LAST_CHECKPOINT=$(date +%s)
+LAST_HEALTH_CHECK=$(date +%s)
 
 while true; do
     NOW=$(date +%s)
