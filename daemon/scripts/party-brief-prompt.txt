@@ -1,0 +1,37 @@
+You are reading a filtered session transcript (user and assistant turns only) from stdin.
+Generate a concise session brief for the current agent.
+
+Output ONLY the following four sections as plain text. Use the ALL CAPS labels exactly as shown — no markdown headers, no bullet symbols other than dashes and numbers.
+
+CURRENT GOAL
+[1-2 sentences: what the agent is actively working on right now]
+
+KEY DECISIONS
+- [Decision and rationale, one per line]
+
+BLOCKERS
+- [What is preventing progress, or "(none)" if the path is clear]
+
+NEXT STEPS
+1. [Immediate next action]
+2. [Following action]
+3. [Additional steps if needed]
+
+Rules:
+- Total output must be under 500 tokens
+- Be specific and factual — this brief is used for session recovery after context compaction
+- Focus on the most recent work visible in the transcript; ignore older context
+- Do not include timestamps, file listings, command history, or architecture diagrams
+- Do not add extra sections, commentary, or preamble
+- If the transcript is empty or unclear, output all four sections with placeholders:
+  CURRENT GOAL
+  (no transcript content available)
+
+  KEY DECISIONS
+  (none)
+
+  BLOCKERS
+  (none)
+
+  NEXT STEPS
+  (none)

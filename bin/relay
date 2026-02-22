@@ -2,141 +2,149 @@
 set -euo pipefail
 
 # relay CLI wrapper - RMF v2 format
-# Usage: relay send <oc|cc|cx|all|admin> "message"
-#        relay checkpoint <chk_id> "content" [--title "title"] [--labels "k1:v1,k2:v2"]
+# Usage:
+#   relay send <oc|cc|cx|admin|all> "message"
+#   relay checkpoint <chk_id> "<content>" [--title <title>] [--labels <labels>]
 
-# Determine sender from AGENT_ROLE env var (default: oc)
-from="${AGENT_ROLE:-oc}"
-
-# Function to send a message via RMF v2 format
-send_message() {
-  local to="$1"
-  local msg="$2"
-  local kind="${3:-chat}"
-
-  # Outbox directory structure: outbox/<from>/
-  local outbox_dir="/mnt/llm-share/relay/outbox/${from}"
+# Shared: determine sender and write .msg file
+_write_msg() {
+  local to="$1" kind="$2" body="$3"
+  local from="${AGENT_ROLE:-oc}"
+  local outbox_dir="${HOME}/.local/share/relay/outbox/${from}"
   mkdir -p "$outbox_dir"
 
-  # Generate filename: <timestamp>-<rand>.msg
-  local timestamp
+  local timestamp rand filename
   timestamp=$(date +%Y%m%d_%H%M%S)
-  local rand
   rand=$(head -c 4 /dev/urandom | xxd -p)
-  local filename="${timestamp}-${rand}.msg"
+  filename="${timestamp}-${rand}.msg"
 
-  # Write RMF v2 format: TO header, KIND header, separator, body
   cat > "${outbox_dir}/${filename}" << EOF
 TO: ${to}
 KIND: ${kind}
 ---
-${msg}
+${body}
 EOF
 }
 
+# relay send <oc|cc|cx|admin|all> "message"
+_relay_send() {
+  local to="${1:-}"
+  shift || true
+
+  if [[ -z "$to" ]]; then
+    echo "Missing recipient. Use oc|cc|cx|admin|all" >&2
+    exit 2
+  fi
+
+  case "$to" in
+    oc|cc|cx|admin|all) ;;
+    *)
+      echo "Invalid recipient: $to (use oc|cc|cx|admin|all)" >&2
+      exit 2
+      ;;
+  esac
+
+  if [[ $# -lt 1 ]]; then
+    echo "Missing message payload" >&2
+    exit 2
+  fi
+
+  local msg="$*"
+  _write_msg "$to" "chat" "$msg"
+}
+
+# relay checkpoint <chk_id> "<content>" [--title <title>] [--labels <labels>]
+_relay_checkpoint() {
+  local chk_id="${1:-}"
+  local content="${2:-}"
+  shift 2 || true
+
+  if [[ -z "$chk_id" || -z "$content" ]]; then
+    echo "Usage: relay checkpoint <chk_id> <content> [--title <title>] [--labels <labels>]" >&2
+    exit 2
+  fi
+
+  local title="" labels_raw=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --title requires a value" >&2
+          exit 2
+        fi
+        title="$2"
+        shift 2
+        ;;
+      --labels)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --labels requires a value" >&2
+          exit 2
+        fi
+        labels_raw="$2"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+
+  local from="${AGENT_ROLE:-oc}"
+
+  # Build labels JSON object from comma-separated "key:value" pairs using python3
+  local labels_json
+  labels_json=$(python3 -c "
+import json, sys
+raw = sys.argv[1]
+result = {}
+if raw:
+    for pair in raw.split(','):
+        idx = pair.find(':')
+        if idx > 0:
+            result[pair[:idx]] = pair[idx+1:]
+print(json.dumps(result))
+" "$labels_raw")
+
+  # Escape content for JSON: newlines, quotes, backslashes, tabs
+  local json_content
+  json_content=$(printf '%s' "$content" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null) || {
+    # Fallback: basic escaping if python3 unavailable
+    json_content=$(printf '%s' "$content" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g' | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
+    json_content="\"${json_content}\""
+  }
+
+  # Escape title for JSON
+  local json_title
+  json_title=$(printf '%s' "$title" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null) || {
+    json_title="\"${title//\"/\\\"}\""
+  }
+
+  # Build JSON payload matching CheckpointContent struct
+  local payload
+  payload=$(cat <<JSONEOF
+{"chk_id":"${chk_id}","role":"${from}","content":${json_content},"title":${json_title},"labels":${labels_json}}
+JSONEOF
+)
+
+  _write_msg "admin" "checkpoint_content" "$payload"
+}
+
+# --- main dispatch ---
 cmd="${1:-}"
+shift || true
 
 case "$cmd" in
   send)
-    shift
-    to="${1:-}"
-    shift || true
-
-    if [[ -z "$to" ]]; then
-      echo "Missing recipient. Use oc|cc|cx|all|admin" >&2
-      exit 2
-    fi
-
-    case "$to" in
-      oc|cc|cx|all|admin) ;;
-      *)
-        echo "Invalid recipient: $to (use oc|cc|cx|all|admin)" >&2
-        exit 2
-        ;;
-    esac
-
-    if [[ $# -lt 1 ]]; then
-      echo "Missing message payload" >&2
-      exit 2
-    fi
-
-    msg="$*"
-    send_message "$to" "$msg" "chat"
+    _relay_send "$@"
     ;;
-
   checkpoint)
-    # Send checkpoint content to admin (single-writer enforcement)
-    # Usage: relay checkpoint <chk_id> "content" [--title "title"] [--labels "k1:v1,k2:v2"]
-    shift
-    chk_id="${1:-}"
-    shift || true
-
-    if [[ -z "$chk_id" ]]; then
-      echo "Missing chk_id" >&2
-      exit 2
-    fi
-
-    content=""
-    title=""
-    labels=""
-
-    # Parse remaining args
-    while [[ $# -gt 0 ]]; do
-      case "$1" in
-        --title)
-          shift
-          title="${1:-}"
-          shift || true
-          ;;
-        --labels)
-          shift
-          labels="${1:-}"
-          shift || true
-          ;;
-        *)
-          if [[ -z "$content" ]]; then
-            content="$1"
-          else
-            content="$content $1"
-          fi
-          shift
-          ;;
-      esac
-    done
-
-    if [[ -z "$content" ]]; then
-      echo "Missing checkpoint content" >&2
-      exit 2
-    fi
-
-    # Build JSON payload for checkpoint_content
-    # Escape content for JSON
-    json_content=$(printf '%s' "$content" | jq -Rs .)
-    json_title=$(printf '%s' "$title" | jq -Rs .)
-
-    # Build labels object
-    if [[ -n "$labels" ]]; then
-      # Convert "k1:v1,k2:v2" to {"k1":"v1","k2":"v2"}
-      labels_json=$(echo "$labels" | tr ',' '\n' | while IFS=: read -r k v; do
-        printf '"%s":"%s",' "$k" "$v"
-      done | sed 's/,$//')
-      labels_json="{${labels_json}}"
-    else
-      labels_json="{}"
-    fi
-
-    payload=$(cat << EOF
-{"chk_id":"${chk_id}","role":"${from}","content":${json_content},"title":${json_title},"labels":${labels_json}}
-EOF
-)
-
-    send_message "admin" "$payload" "checkpoint_content"
-    echo "Checkpoint sent: chk_id=${chk_id}"
+    _relay_checkpoint "$@"
     ;;
-
   *)
-    echo "Usage: relay send <oc|cc|cx|all|admin> <message>" >&2
-    echo "       relay checkpoint <chk_id> <content> [--title <title>] [--labels <k1:v1,k2:v2>]" >&2
+    echo "Usage: relay <send|checkpoint> ..." >&2
+    echo "  relay send <oc|cc|cx|admin|all> <message>" >&2
+    echo "  relay checkpoint <chk_id> <content> [--title <title>] [--labels <labels>]" >&2
     exit 2
     ;;
 esac

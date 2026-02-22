@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# relay wrapper for CX — hardcodes AGENT_ROLE since Codex sandbox strips env vars
+AGENT_ROLE=cx exec relay "$@"

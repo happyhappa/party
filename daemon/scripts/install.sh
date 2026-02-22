@@ -12,7 +12,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Guard: must be run from the main checkout, never from a worktree
 MAIN_CHECKOUT="$HOME/Sandbox/personal/party"
-if [[ "$PROJECT_DIR" != "$MAIN_CHECKOUT" ]]; then
+if [[ "$(dirname "$PROJECT_DIR")" != "$MAIN_CHECKOUT" ]]; then
     echo "[install] ERROR: must be run from the main checkout ($MAIN_CHECKOUT)." >&2
     echo "[install] ERROR: You are in: $PROJECT_DIR" >&2
     echo "[install] ERROR: Running install.sh from a worktree publishes the wrong infra. Aborting." >&2
@@ -86,6 +86,40 @@ ln -sf "$MAIN_CHECKOUT/bin/party" "$BIN_DIR/party"
 [[ -f "$SCRIPT_DIR/s3-sync" ]] && ln -sf "$SCRIPT_DIR/s3-sync" "$BIN_DIR/s3-sync" || true
 log "  ✓ Scripts symlinked in $BIN_DIR (pointing to $MAIN_CHECKOUT)"
 
+# 3a. Deploy wrapper scripts
+for script in cx-checkpoint-inject tmux-inject; do
+    if [[ -f "$SCRIPT_DIR/$script" ]]; then
+        chmod +x "$SCRIPT_DIR/$script"
+        ln -sf "$SCRIPT_DIR/$script" "$BIN_DIR/$script"
+        log "  ✓ $script symlinked in $BIN_DIR"
+    else
+        warn "  ⚠ $script not found in $SCRIPT_DIR, skipping"
+    fi
+done
+
+# 3c. Deploy relay CLI and wrappers
+ln -sf "$MAIN_CHECKOUT/bin/relay" "$BIN_DIR/relay"
+for script in relay-cx; do
+    if [[ -f "$SCRIPT_DIR/$script" ]]; then
+        chmod +x "$SCRIPT_DIR/$script"
+        ln -sf "$SCRIPT_DIR/$script" "$BIN_DIR/$script"
+        log "  ✓ $script symlinked in $BIN_DIR"
+    else
+        warn "  ⚠ $script not found in $SCRIPT_DIR, skipping"
+    fi
+done
+
+# 3d. Deploy pre-compact support scripts
+ln -sf "$SCRIPT_DIR/party-jsonl-filter" "$BIN_DIR/party-jsonl-filter"
+ln -sf "$SCRIPT_DIR/party-brief-prompt.txt" "$BIN_DIR/party-brief-prompt.txt"
+log "  ✓ Pre-compact support scripts symlinked"
+
+# 3b. Deploy admin skills to ~/.party/admin-skills/
+ADMIN_SKILLS_DEST="$HOME/.party/admin-skills"
+mkdir -p "$ADMIN_SKILLS_DEST"
+cp "$PROJECT_DIR/daemon/admin-skills"/*.md "$ADMIN_SKILLS_DEST/" 2>/dev/null || true
+log "  ✓ Admin skills deployed to $ADMIN_SKILLS_DEST"
+
 # 4. Install Claude commands
 if [[ "$INSTALL_COMMANDS" == "true" ]]; then
     info "Installing Claude commands..."
@@ -157,6 +191,22 @@ fi
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     warn "  ⚠ $BIN_DIR not in PATH"
     info "  Add to your shell profile: export PATH=\"\$PATH:$BIN_DIR\""
+fi
+
+# 7. Verify no standalone drift
+info "Verifying symlinks..."
+DRIFT=0
+for script in party relay tmux-inject cx-checkpoint-inject s3-sync relay-cx party-jsonl-filter party-brief-prompt.txt; do
+    target="$BIN_DIR/$script"
+    if [[ -f "$target" && ! -L "$target" ]]; then
+        warn "  DRIFT: $target is a standalone copy, not a symlink"
+        DRIFT=1
+    fi
+done
+if [[ $DRIFT -eq 1 ]]; then
+    err "  Run install.sh again to fix drifted scripts"
+else
+    log "  ✓ All scripts are symlinks — no drift detected"
 fi
 
 echo ""
