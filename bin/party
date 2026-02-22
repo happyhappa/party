@@ -110,6 +110,10 @@ tmux set-option -p -t "$CX_PANE" @role cx
 # Select OC pane as default
 tmux select-pane -t "$OC_PANE"
 
+# Allow shells in new panes to fully initialize before sending keys.
+# Without this, send-keys can race with shell startup and replay twice.
+sleep 0.5
+
 # Write project-dirs.json for relay-daemon idle detection (atomic write)
 dir_to_slug() { echo "-${1#/}" | tr '/_' '--'; }
 OC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$OC_DIR")"
@@ -162,9 +166,31 @@ if ! pgrep -f relay-daemon &>/dev/null; then
     log "Relay daemon started"
 fi
 
+# Kill stale admin-loop if running
+ADMIN_PID_FILE="$RELAY_STATE_DIR/admin-loop.pid"
+if [[ -f "$ADMIN_PID_FILE" ]]; then
+    OLD_PID=$(cat "$ADMIN_PID_FILE")
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        log "Killing stale admin-loop (pid=$OLD_PID)"
+        kill "$OLD_PID" 2>/dev/null || true
+        sleep 1
+    fi
+    rm -f "$ADMIN_PID_FILE"
+fi
+
+# Cleanup trap: kill admin-loop on session exit
+cleanup() {
+    if [[ -f "$ADMIN_PID_FILE" ]]; then
+        kill "$(cat "$ADMIN_PID_FILE")" 2>/dev/null || true
+        rm -f "$ADMIN_PID_FILE"
+    fi
+}
+trap cleanup EXIT
+
 # Start admin loop as background process
 if [[ -x "$ADMIN_LOOP" ]]; then
     RELAY_STATE_DIR="$RELAY_STATE_DIR" "$ADMIN_LOOP" >> "$LLM_SHARE/relay/log/admin-loop.log" 2>&1 & disown
+    echo $! > "$ADMIN_PID_FILE"
     log "Admin loop started (pid=$!, log=$LLM_SHARE/relay/log/admin-loop.log)"
 else
     err "Admin loop not found at $ADMIN_LOOP — run install.sh first"

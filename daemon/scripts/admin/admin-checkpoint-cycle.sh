@@ -53,8 +53,16 @@ if [[ -n "$CC_PANE" ]]; then
     tmux-inject "$CC_PANE" "/checkpoint --respond $CHK_ID" && DISPATCHED+=("cc") || echo "WARN: CC inject failed"
 fi
 
-# Dispatch to CX (uses dedicated script, no chk_id arg)
-cx-checkpoint-inject && DISPATCHED+=("cx") || echo "WARN: CX inject failed"
+# Dispatch to CX only if it's at an idle prompt
+CX_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cx // empty')
+if [[ -n "$CX_PANE" ]]; then
+    CX_TAIL=$(tmux capture-pane -t "$CX_PANE" -p -S -5 2>/dev/null || true)
+    if echo "$CX_TAIL" | grep -q '? for shortcuts'; then
+        cx-checkpoint-inject && DISPATCHED+=("cx") || echo "WARN: CX inject failed"
+    else
+        echo "SKIP: CX not at idle prompt, skipping checkpoint"
+    fi
+fi
 
 # Log the dispatch
 DISPATCHED_JSON=$(printf '%s\n' "${DISPATCHED[@]}" | jq -R . | jq -s .)
