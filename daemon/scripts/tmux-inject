@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# tmux-inject - Send text + Enter to a tmux pane with proper timing.
+set -euo pipefail
+if [[ $# -lt 2 ]]; then
+  echo "Usage: tmux-inject <pane-id> <text>" >&2
+  exit 1
+fi
+PANE="$1"
+shift
+TEXT="$*"
+tmux send-keys -t "$PANE" -l "$TEXT"
+sleep 1
+tmux send-keys -t "$PANE" Enter

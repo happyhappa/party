@@ -1,0 +1,3 @@
+# bin/ — managed by install.sh
+Scripts here are deployed system-wide via `install.sh` from main after merge.
+Source lives in `daemon/scripts/`.

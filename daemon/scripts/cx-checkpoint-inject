@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Injects /prompts:checkpoint into the CX pane with NO arguments.
+set -euo pipefail
+PANES_FILE="${RELAY_STATE_DIR:-$HOME/llm-share/relay/state}/panes.json"
+CX_PANE=$(jq -r '.panes.cx // empty' "$PANES_FILE")
+if [[ -z "$CX_PANE" ]]; then
+    echo "ERROR: CX pane not registered in $PANES_FILE" >&2
+    exit 1
+fi
+tmux-inject "$CX_PANE" "/prompts:checkpoint"

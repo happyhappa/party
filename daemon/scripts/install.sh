@@ -60,7 +60,6 @@ mkdir -p "$LLM_SHARE"/{relay/{outbox/{oc,cc,cx},processed,log,state/locks},attac
 mkdir -p "$BIN_DIR"
 
 # Initialize state files if missing
-[[ -f "$LLM_SHARE/relay/processed/offsets.json" ]] || echo '{}' > "$LLM_SHARE/relay/processed/offsets.json"
 [[ -f "$LLM_SHARE/relay/state/agents.json" ]] || echo '{}' > "$LLM_SHARE/relay/state/agents.json"
 
 # Placeholder files for Phase 3b
@@ -114,11 +113,17 @@ ln -sf "$SCRIPT_DIR/party-jsonl-filter" "$BIN_DIR/party-jsonl-filter"
 ln -sf "$SCRIPT_DIR/party-brief-prompt.txt" "$BIN_DIR/party-brief-prompt.txt"
 log "  ✓ Pre-compact support scripts symlinked"
 
-# 3b. Deploy admin skills to ~/.party/admin-skills/
-ADMIN_SKILLS_DEST="$HOME/.party/admin-skills"
-mkdir -p "$ADMIN_SKILLS_DEST"
-cp "$PROJECT_DIR/daemon/admin-skills"/*.md "$ADMIN_SKILLS_DEST/" 2>/dev/null || true
-log "  ✓ Admin skills deployed to $ADMIN_SKILLS_DEST"
+# 3e. Deploy admin loop scripts
+ADMIN_SCRIPT_DIR="$SCRIPT_DIR/admin"
+for script in admin-loop.sh admin-checkpoint-cycle.sh admin-health-check.sh admin-restart-cx.sh admin-register-panes.sh; do
+    if [[ -f "$ADMIN_SCRIPT_DIR/$script" ]]; then
+        chmod +x "$ADMIN_SCRIPT_DIR/$script"
+        ln -sf "$ADMIN_SCRIPT_DIR/$script" "$BIN_DIR/$script"
+        log "  ✓ $script symlinked in $BIN_DIR"
+    else
+        warn "  ⚠ $script not found in $ADMIN_SCRIPT_DIR, skipping"
+    fi
+done
 
 # 4. Install Claude commands
 if [[ "$INSTALL_COMMANDS" == "true" ]]; then
@@ -196,7 +201,7 @@ fi
 # 7. Verify no standalone drift
 info "Verifying symlinks..."
 DRIFT=0
-for script in party relay tmux-inject cx-checkpoint-inject s3-sync relay-cx party-jsonl-filter party-brief-prompt.txt; do
+for script in party relay tmux-inject cx-checkpoint-inject s3-sync relay-cx party-jsonl-filter party-brief-prompt.txt admin-loop.sh admin-checkpoint-cycle.sh admin-health-check.sh admin-restart-cx.sh admin-register-panes.sh; do
     target="$BIN_DIR/$script"
     if [[ -f "$target" && ! -L "$target" ]]; then
         warn "  DRIFT: $target is a standalone copy, not a symlink"
