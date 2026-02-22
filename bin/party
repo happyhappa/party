@@ -143,10 +143,8 @@ log "  CC:    $CC_CMD (in $CC_DIR)"
 log "  CX:    $CX_CMD (in $CX_DIR)"
 log ""
 
-# Wait for agents to initialize before registering panes.
-# Codex takes ~10s to start; writing panes.json too early causes relay to
-# route messages to the zsh shell before Codex is running.
-log "Waiting 15s for agents to initialize..."
+# Wait for shells to initialize before writing panes.json.
+log "Waiting 3s for shells to initialize..."
 sleep 3
 
 # Write pane map for relay daemon (3 panes, no admin)
