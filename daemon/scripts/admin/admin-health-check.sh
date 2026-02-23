@@ -110,7 +110,8 @@ for ROLE in oc cc cx; do
     # Error pattern scan (3+ occurrences of same pattern = problem)
     ERROR_FOUND=false
     for pattern in error panic FATAL killed Traceback SIGTERM SIGKILL OOM; do
-        COUNT=$(echo "$TAIL" | grep -ci "$pattern" 2>/dev/null || echo 0)
+        COUNT=$(echo "$TAIL" | grep -ci "$pattern" 2>/dev/null || true)
+        COUNT=${COUNT:-0}; COUNT=${COUNT//[^0-9]/}
         if [[ "$COUNT" -ge 3 ]]; then
             ERROR_FOUND=true
             STATUS[$ROLE]="unhealthy"
