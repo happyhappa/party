@@ -114,6 +114,37 @@ tmux select-pane -t "$OC_PANE"
 # Without this, send-keys can race with shell startup and replay twice.
 sleep 0.5
 
+# Write CLAUDE.md into OC/CC worktrees if not already tracked by git
+write_claude_md() {
+    local dir="$1"
+    local claude_md="$dir/CLAUDE.md"
+    # Only write if not already tracked by git
+    if ! git -C "$dir" ls-files --error-unmatch CLAUDE.md &>/dev/null; then
+        cat > "$claude_md" << 'CLAUDE_EOF'
+## Git Workflow (MANDATORY)
+
+- **Work in THIS directory only.** Never write files outside your worktree. Never `cd` to another worktree or the main checkout.
+- **Always make NEW commits.** Never `git commit --amend`. Amending breaks merge flow — OC merges your branch to main, and amended commits cause history divergence.
+- **OC handles merges.** You commit and push on your branch. OC merges to main. Do not merge, rebase, or cherry-pick to/from main yourself.
+- **One logical change per commit.** Don't bundle unrelated fixes.
+
+## Infrastructure Rule
+
+Files in `daemon/`, `bin/`, `systemd/` are infrastructure. You CAN edit them here — they merge to main like any other change, and `install.sh` deploys them system-wide.
+
+Do NOT run `install.sh` from this worktree — it deploys from main after merge.
+
+## Runtime Artifacts (not tracked)
+
+`.beads/last_compact_offset_*` and `state/` are runtime artifacts — do not commit them.
+CLAUDE_EOF
+        log "Wrote CLAUDE.md to $dir"
+    fi
+}
+
+write_claude_md "$OC_DIR"
+write_claude_md "$CC_DIR"
+
 # Write project-dirs.json for relay-daemon idle detection (atomic write)
 dir_to_slug() { echo "-${1#/}" | tr '/_' '--'; }
 OC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$OC_DIR")"
