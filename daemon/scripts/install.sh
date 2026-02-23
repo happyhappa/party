@@ -75,6 +75,11 @@ cd "$PROJECT_DIR"
 if command -v go &> /dev/null; then
     GOCACHE=/tmp/go-build-cache go build -o "$BIN_DIR/relay-daemon" ./cmd/relay
     log "  ✓ Relay daemon built: $BIN_DIR/relay-daemon"
+    # Restart systemd service if it's already running
+    if systemctl --user is-active relay-daemon &>/dev/null; then
+        systemctl --user restart relay-daemon
+        log "  ✓ Relay daemon restarted"
+    fi
 else
     warn "  ⚠ Go not found, skipping daemon build"
 fi

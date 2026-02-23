@@ -88,7 +88,7 @@ for ROLE in oc cc cx; do
         if echo "$TAIL" | grep -qE '(context left|\? for shortcuts)'; then
             # Check for low context — auto-compact if <= 60% and idle
             CX_CONTEXT=$(echo "$TAIL" | grep -oP '\d+(?=% context left)' | tail -1)
-            CX_IDLE=$(echo "$TAIL" | grep -q '? for shortcuts' && echo "true" || echo "false")
+            CX_IDLE=$(echo "$TAIL" | grep -qE '(context left|\? for shortcuts)' && echo "true" || echo "false")
             if [[ -n "${CX_CONTEXT:-}" && "$CX_CONTEXT" -le 60 && "$CX_IDLE" == "true" ]]; then
                 CX_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cx')
                 tmux send-keys -t "$CX_PANE" "/compact" Enter
