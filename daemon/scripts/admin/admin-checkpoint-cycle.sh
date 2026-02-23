@@ -37,7 +37,11 @@ PANES_JSON=$(cat "$PANES_FILE")
 OC_PANE=$(echo "$PANES_JSON" | jq -r '.panes.oc // empty')
 CC_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cc // empty')
 
-# Check if agent is idle based on JSONL mtime
+# Idle detection with grace period (mirrors original Go idle.go logic)
+LAST_DISPATCH_FILE="$STATE_DIR/last-checkpoint-dispatch"
+GRACE_PERIOD=120   # 2 minutes — ignore JSONL writes caused by checkpoint response
+BACKSTOP_INTERVAL=7200  # 2 hours — force checkpoint even when idle
+
 is_agent_idle() {
     local role="$1"
     local project_dir
@@ -46,14 +50,29 @@ is_agent_idle() {
 
     local latest_jsonl
     latest_jsonl=$(ls -t "$project_dir"/*.jsonl 2>/dev/null | head -1)
-    [[ -z "$latest_jsonl" ]] && return 1  # no jsonl, assume active
+    [[ -z "$latest_jsonl" ]] && return 1
 
-    local mtime now age
+    local mtime now last_dispatch cutoff
     mtime=$(stat -c %Y "$latest_jsonl" 2>/dev/null || echo 0)
     now=$(date +%s)
-    age=$(( now - mtime ))
+    last_dispatch=$(cat "$LAST_DISPATCH_FILE" 2>/dev/null || echo 0)
+    cutoff=$(( last_dispatch + GRACE_PERIOD ))
 
-    (( age > 300 ))  # idle if no activity for 5 minutes
+    # Activity within grace period of last dispatch = checkpoint response, still idle
+    if (( mtime <= cutoff )); then
+        return 0  # idle
+    fi
+
+    # Activity after grace period = genuinely active
+    return 1  # active
+}
+
+should_backstop() {
+    local last_dispatch now age
+    last_dispatch=$(cat "$LAST_DISPATCH_FILE" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    age=$(( now - last_dispatch ))
+    (( age > BACKSTOP_INTERVAL ))
 }
 
 # Generate cycle nonce
@@ -62,9 +81,16 @@ CHK_ID="chk-$(date +%s)-$(head -c 4 /dev/urandom | xxd -p)"
 # Track which panes were dispatched to
 DISPATCHED=()
 
+# Backstop: force checkpoint if >2h since last dispatch
+FORCE_DISPATCH=false
+if should_backstop; then
+    FORCE_DISPATCH=true
+    echo "BACKSTOP: >2h since last dispatch, forcing checkpoint"
+fi
+
 # Dispatch to OC
 if [[ -n "$OC_PANE" ]]; then
-    if is_agent_idle "oc"; then
+    if [[ "$FORCE_DISPATCH" != "true" ]] && is_agent_idle "oc"; then
         echo "SKIP: OC idle, skipping checkpoint"
     else
         tmux-inject "$OC_PANE" "/checkpoint --respond $CHK_ID" && DISPATCHED+=("oc") || echo "WARN: OC inject failed"
@@ -73,7 +99,7 @@ fi
 
 # Dispatch to CC
 if [[ -n "$CC_PANE" ]]; then
-    if is_agent_idle "cc"; then
+    if [[ "$FORCE_DISPATCH" != "true" ]] && is_agent_idle "cc"; then
         echo "SKIP: CC idle, skipping checkpoint"
     else
         tmux-inject "$CC_PANE" "/checkpoint --respond $CHK_ID" && DISPATCHED+=("cc") || echo "WARN: CC inject failed"
@@ -94,5 +120,8 @@ fi
 # Log the dispatch
 DISPATCHED_JSON=$(printf '%s\n' "${DISPATCHED[@]}" | jq -R . | jq -s .)
 echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"checkpoint-cycle\",\"cycle_id\":\"$CHK_ID\",\"dispatched_to\":$DISPATCHED_JSON,\"status\":\"dispatched\"}" >> "$LOG_FILE"
+
+# Record dispatch time for grace period calculation
+date +%s > "$LAST_DISPATCH_FILE"
 
 echo "Checkpoint cycle $CHK_ID dispatched."
