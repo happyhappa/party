@@ -34,7 +34,10 @@ log_anomaly() {
     fi
 }
 
-# Check if agent is idle based on JSONL mtime
+# Idle detection with grace period (shared logic with checkpoint-cycle)
+LAST_DISPATCH_FILE="$STATE_DIR/last-checkpoint-dispatch"
+GRACE_PERIOD=120  # 2 minutes — ignore JSONL writes caused by checkpoint response
+
 is_agent_idle() {
     local role="$1"
     local project_dir
@@ -43,14 +46,21 @@ is_agent_idle() {
 
     local latest_jsonl
     latest_jsonl=$(ls -t "$project_dir"/*.jsonl 2>/dev/null | head -1)
-    [[ -z "$latest_jsonl" ]] && return 1  # no jsonl, assume active
+    [[ -z "$latest_jsonl" ]] && return 1
 
-    local mtime now age
+    local mtime now last_dispatch cutoff
     mtime=$(stat -c %Y "$latest_jsonl" 2>/dev/null || echo 0)
     now=$(date +%s)
-    age=$(( now - mtime ))
+    last_dispatch=$(cat "$LAST_DISPATCH_FILE" 2>/dev/null || echo 0)
+    cutoff=$(( last_dispatch + GRACE_PERIOD ))
 
-    (( age > 300 ))  # idle if no activity for 5 minutes
+    # Activity within grace period of last dispatch = checkpoint response, still idle
+    if (( mtime <= cutoff )); then
+        return 0  # idle
+    fi
+
+    # Activity after grace period = genuinely active
+    return 1  # active
 }
 
 declare -A STATUS
