@@ -39,7 +39,7 @@ CC_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cc // empty')
 
 # Idle detection with grace period (mirrors original Go idle.go logic)
 LAST_DISPATCH_FILE="$STATE_DIR/last-checkpoint-dispatch"
-GRACE_PERIOD=120   # 2 minutes — ignore JSONL writes caused by checkpoint response
+GRACE_PERIOD=300   # 5 minutes — ignore JSONL writes caused by checkpoint response (agent processing can take 2-3min)
 BACKSTOP_INTERVAL=7200  # 2 hours — force checkpoint even when idle
 
 is_agent_idle() {

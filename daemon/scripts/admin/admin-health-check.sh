@@ -36,7 +36,7 @@ log_anomaly() {
 
 # Idle detection with grace period (shared logic with checkpoint-cycle)
 LAST_DISPATCH_FILE="$STATE_DIR/last-checkpoint-dispatch"
-GRACE_PERIOD=120  # 2 minutes — ignore JSONL writes caused by checkpoint response
+GRACE_PERIOD=300  # 5 minutes — ignore JSONL writes caused by checkpoint response (agent processing can take 2-3min)
 
 is_agent_idle() {
     local role="$1"
