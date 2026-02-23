@@ -164,5 +164,11 @@ for ROLE in oc cc cx; do
     fi
 done
 
+# Failsafe: send bare Enter to each pane to unstick any queued input
+for ROLE in oc cc cx; do
+    PANE_ID=$(echo "$PANES_JSON" | jq -r ".panes.$ROLE // empty")
+    [[ -n "$PANE_ID" ]] && tmux send-keys -t "$PANE_ID" Enter 2>/dev/null || true
+done
+
 # Log completion
 echo "{\"timestamp\":\"$TIMESTAMP\",\"type\":\"health-check\",\"results\":{\"oc\":\"${STATUS[oc]}\",\"cc\":\"${STATUS[cc]}\",\"cx\":\"${STATUS[cx]}\"},\"status\":\"complete\"}" >> "$LOG_FILE"
