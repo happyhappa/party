@@ -34,12 +34,37 @@ log_anomaly() {
     fi
 }
 
+# Check if agent is idle based on JSONL mtime
+is_agent_idle() {
+    local role="$1"
+    local project_dir
+    project_dir=$(jq -r ".${role} // empty" "$STATE_DIR/project-dirs.json" 2>/dev/null)
+    [[ -z "$project_dir" ]] && return 1  # can't determine, assume active
+
+    local latest_jsonl
+    latest_jsonl=$(ls -t "$project_dir"/*.jsonl 2>/dev/null | head -1)
+    [[ -z "$latest_jsonl" ]] && return 1  # no jsonl, assume active
+
+    local mtime now age
+    mtime=$(stat -c %Y "$latest_jsonl" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    age=$(( now - mtime ))
+
+    (( age > 300 ))  # idle if no activity for 5 minutes
+}
+
 declare -A STATUS
 
 for ROLE in oc cc cx; do
     PANE_ID=$(echo "$PANES_JSON" | jq -r ".panes.$ROLE // empty")
     if [[ -z "$PANE_ID" ]]; then
         STATUS[$ROLE]="missing"
+        continue
+    fi
+
+    # Skip detailed health checks for idle OC/CC
+    if [[ "$ROLE" == "oc" || "$ROLE" == "cc" ]] && is_agent_idle "$ROLE"; then
+        STATUS[$ROLE]="idle"
         continue
     fi
 
