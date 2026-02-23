@@ -37,6 +37,25 @@ PANES_JSON=$(cat "$PANES_FILE")
 OC_PANE=$(echo "$PANES_JSON" | jq -r '.panes.oc // empty')
 CC_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cc // empty')
 
+# Check if agent is idle based on JSONL mtime
+is_agent_idle() {
+    local role="$1"
+    local project_dir
+    project_dir=$(jq -r ".${role} // empty" "$STATE_DIR/project-dirs.json" 2>/dev/null)
+    [[ -z "$project_dir" ]] && return 1  # can't determine, assume active
+
+    local latest_jsonl
+    latest_jsonl=$(ls -t "$project_dir"/*.jsonl 2>/dev/null | head -1)
+    [[ -z "$latest_jsonl" ]] && return 1  # no jsonl, assume active
+
+    local mtime now age
+    mtime=$(stat -c %Y "$latest_jsonl" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    age=$(( now - mtime ))
+
+    (( age > 300 ))  # idle if no activity for 5 minutes
+}
+
 # Generate cycle nonce
 CHK_ID="chk-$(date +%s)-$(head -c 4 /dev/urandom | xxd -p)"
 
@@ -45,12 +64,20 @@ DISPATCHED=()
 
 # Dispatch to OC
 if [[ -n "$OC_PANE" ]]; then
-    tmux-inject "$OC_PANE" "/checkpoint --respond $CHK_ID" && DISPATCHED+=("oc") || echo "WARN: OC inject failed"
+    if is_agent_idle "oc"; then
+        echo "SKIP: OC idle, skipping checkpoint"
+    else
+        tmux-inject "$OC_PANE" "/checkpoint --respond $CHK_ID" && DISPATCHED+=("oc") || echo "WARN: OC inject failed"
+    fi
 fi
 
 # Dispatch to CC
 if [[ -n "$CC_PANE" ]]; then
-    tmux-inject "$CC_PANE" "/checkpoint --respond $CHK_ID" && DISPATCHED+=("cc") || echo "WARN: CC inject failed"
+    if is_agent_idle "cc"; then
+        echo "SKIP: CC idle, skipping checkpoint"
+    else
+        tmux-inject "$CC_PANE" "/checkpoint --respond $CHK_ID" && DISPATCHED+=("cc") || echo "WARN: CC inject failed"
+    fi
 fi
 
 # Dispatch to CX only if it's at an idle prompt
