@@ -48,6 +48,11 @@ OC_DIR="${RELAY_OC_DIR:-$PROJECT_DIR/main}"
 CC_DIR="${RELAY_CC_DIR:-$PROJECT_DIR/cc-wt}"
 CX_DIR="${RELAY_CX_DIR:-$PROJECT_DIR/cx-wt}"
 
+# Auto-trust mise config in worktrees (same git content, different paths need separate trust)
+for dir in "$CC_DIR" "$CX_DIR"; do
+    [[ -f "$dir/.mise.toml" ]] && mise trust "$dir/.mise.toml" 2>/dev/null || true
+done
+
 # Slug helper (used for session detection and project-dirs.json)
 dir_to_slug() { echo "-${1#/}" | tr '/_' '--'; }
 
