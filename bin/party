@@ -264,26 +264,32 @@ log "Writing pane map to $PANE_MAP"
 printf '{"panes":{"oc":"%s","cc":"%s","cx":"%s"},"version":1,"registered_at":"%s"}\n' \
     "$OC_PANE" "$CC_PANE" "$CX_PANE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PANE_MAP"
 
-# Start relay daemon inline (per-project, not systemd)
-# The Go daemon writes its own PID file at $RELAY_STATE_DIR/relay-daemon.pid
+# Force-kill stale processes before starting new ones
 RELAY_PID_FILE="$RELAY_STATE_DIR/relay-daemon.pid"
-if [[ -f "$RELAY_PID_FILE" ]] && kill -0 $(cat "$RELAY_PID_FILE") 2>/dev/null; then
-    log "Relay daemon already running (pid=$(cat "$RELAY_PID_FILE"))"
-else
-    relay-daemon >> "$RELAY_LOG_DIR/relay.log" 2>&1 & disown
-    sleep 1
-    if [[ -f "$RELAY_PID_FILE" ]]; then
-        log "Relay daemon started (pid=$(cat "$RELAY_PID_FILE"))"
-    else
-        err "Relay daemon failed to start — check $RELAY_LOG_DIR/relay.log"
-    fi
-fi
-
-# Kill stale admin-loop by PID (not pkill which is global)
 ADMIN_PID_FILE="$RELAY_STATE_DIR/admin-loop.pid"
-if [[ -f "$ADMIN_PID_FILE" ]]; then
+KILLED_STALE=false
+if [[ -f "$RELAY_PID_FILE" ]] && kill -0 $(cat "$RELAY_PID_FILE") 2>/dev/null; then
+    log "Killing stale relay daemon (pid=$(cat "$RELAY_PID_FILE"))"
+    kill $(cat "$RELAY_PID_FILE") 2>/dev/null || true
+    KILLED_STALE=true
+fi
+if [[ -f "$ADMIN_PID_FILE" ]] && kill -0 $(cat "$ADMIN_PID_FILE") 2>/dev/null; then
+    log "Killing stale admin loop (pid=$(cat "$ADMIN_PID_FILE"))"
     kill $(cat "$ADMIN_PID_FILE") 2>/dev/null || true
     rm -f "$ADMIN_PID_FILE"
+    KILLED_STALE=true
+fi
+# Wait for flock to release after killing stale processes
+$KILLED_STALE && sleep 1
+
+# Start relay daemon inline (per-project, not systemd)
+# The Go daemon writes its own PID file at $RELAY_STATE_DIR/relay-daemon.pid
+relay-daemon >> "$RELAY_LOG_DIR/relay.log" 2>&1 & disown
+sleep 1
+if [[ -f "$RELAY_PID_FILE" ]] && kill -0 $(cat "$RELAY_PID_FILE") 2>/dev/null; then
+    log "Relay daemon started (pid=$(cat "$RELAY_PID_FILE"))"
+else
+    err "Relay daemon failed to start — check $RELAY_LOG_DIR/relay.log"
 fi
 
 # Start admin loop as background process
@@ -293,6 +299,14 @@ if [[ -x "$ADMIN_LOOP" ]]; then
     log "Admin loop started (pid=$!, log=$RELAY_LOG_DIR/admin-loop.log)"
 else
     err "Admin loop not found at $ADMIN_LOOP — run install.sh first"
+fi
+
+# Auto-start beads daemon if .beads dir exists
+if [[ -d "$RELAY_MAIN_DIR/.beads" ]] && command -v bd &>/dev/null; then
+    if ! (cd "$RELAY_MAIN_DIR" && bd daemon status --quiet 2>/dev/null); then
+        (cd "$RELAY_MAIN_DIR" && bd daemon start 2>/dev/null) || true
+        log "Beads daemon started for $RELAY_MAIN_DIR"
+    fi
 fi
 
 # Attach to session
