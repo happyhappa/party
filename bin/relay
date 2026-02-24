@@ -15,7 +15,7 @@ send_message() {
   local kind="${3:-chat}"
 
   # Outbox directory structure: outbox/<from>/
-  local outbox_dir="/mnt/llm-share/relay/outbox/${from}"
+  local outbox_dir="${RELAY_INBOX_DIR:?RELAY_INBOX_DIR not set}/${from}"
   mkdir -p "$outbox_dir"
 
   # Generate filename: <timestamp>-<rand>.msg
