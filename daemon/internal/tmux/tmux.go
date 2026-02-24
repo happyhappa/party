@@ -66,7 +66,7 @@ func (t *Tmux) SendToPane(pane, message string) error {
 		return err
 	}
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	// Only send Escape if vim mode is enabled (to exit INSERT mode)
 	if vimModeEnabled() {

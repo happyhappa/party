@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Guard: must be run from the main checkout, never from a worktree
-MAIN_CHECKOUT="$HOME/Sandbox/personal/party"
+MAIN_CHECKOUT="$HOME/Sandbox/personal/new_party/main"
 if [[ "$(dirname "$PROJECT_DIR")" != "$MAIN_CHECKOUT" ]]; then
     echo "[install] ERROR: must be run from the main checkout ($MAIN_CHECKOUT)." >&2
     echo "[install] ERROR: You are in: $PROJECT_DIR" >&2
