@@ -3,7 +3,9 @@ package checkpoint
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -61,6 +63,12 @@ func WriteBead(c *Content) (string, error) {
 
 	args = append(args, "--body", c.Content)
 	cmd := exec.Command("bd", args...)
+	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
+		dbPath := filepath.Join(beadsDir, "beads.db")
+		if _, err := os.Stat(dbPath); err == nil {
+			cmd.Args = append([]string{cmd.Args[0], "--db", dbPath}, cmd.Args[1:]...)
+		}
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("bd create: %w: %s", err, strings.TrimSpace(string(out)))

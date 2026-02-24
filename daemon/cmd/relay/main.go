@@ -38,6 +38,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("config: %v", err)
+	}
 
 	// Fix 2: Acquire exclusive lockfile to prevent duplicate daemons
 	lockPath := filepath.Join(cfg.StateDir, "relay-daemon.lock")
@@ -46,6 +49,11 @@ func main() {
 		log.Fatalf("another relay-daemon is already running (lock %s): %v", lockPath, err)
 	}
 	defer lockFile.Close()
+	pidPath := filepath.Join(cfg.StateDir, "relay-daemon.pid")
+	if err := os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
+		log.Printf("warning: could not write PID file: %v", err)
+	}
+	defer os.Remove(pidPath)
 
 	// Fix 3: Clean stale session-map files from previous runs
 	staleFiles, _ := filepath.Glob(filepath.Join(cfg.StateDir, "session-map-*.json"))
