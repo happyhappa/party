@@ -19,7 +19,7 @@ type Injector struct {
 	queueMaxAge  time.Duration
 	logger       *logpkg.EventLog
 
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	queues    map[string]*paneQueue
 	startOnce sync.Once
 }
@@ -102,7 +102,9 @@ func (i *Injector) Inject(env *envelope.Envelope) error {
 	if err := env.Validate(); err != nil {
 		return fmt.Errorf("inject: invalid envelope: %w", err)
 	}
+	i.mu.RLock()
 	target, ok := i.targets[env.To]
+	i.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("inject: unknown target %q", env.To)
 	}
