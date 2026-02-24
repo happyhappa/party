@@ -135,6 +135,12 @@ func newPaneQueue(target, paneID string) *paneQueue {
 	}
 }
 
+func (pq *paneQueue) getPaneID() string {
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
+	return pq.paneID
+}
+
 func (pq *paneQueue) enqueue(item *queuedMessage) {
 	pq.mu.Lock()
 	pq.items = append(pq.items, item)
@@ -185,11 +191,14 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 			continue
 		}
 
+		// Read paneID once per iteration under lock (safe against hot-reload updates)
+		paneID := pq.getPaneID()
+
 		injector.logEvent(logpkg.EventTypeDequeue, item.env.From, pq.target, item.env.MsgID, "")
 
 		// Slash commands are injected bare so Claude Code parses them as skill invocations
 		if strings.HasPrefix(strings.TrimSpace(item.env.Payload), "/") {
-			if err := injector.tmux.SendToPane(pq.paneID, strings.TrimSpace(item.env.Payload)); err != nil {
+			if err := injector.tmux.SendToPane(paneID, strings.TrimSpace(item.env.Payload)); err != nil {
 				injector.logEvent(logpkg.EventTypeBlocked, item.env.From, pq.target, item.env.MsgID, truncateForLog(err.Error()))
 				item.backoff = nextBackoff(item.backoff)
 				pq.requeueFront(item)
@@ -202,7 +211,7 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 			continue
 		}
 
-		ready, tail, err := injector.IsPaneReady(pq.paneID, pq.target)
+		ready, tail, err := injector.IsPaneReady(paneID, pq.target)
 		if err != nil || !ready {
 			if tail == "" && err != nil {
 				tail = err.Error()
@@ -222,7 +231,7 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 		tagged := fmt.Sprintf("<relay-message from=%q to=%q kind=%q>\n[Relay from %s. Not from the human user.]\n\n%s\n</relay-message>",
 			item.env.From, item.env.To, item.env.Kind, item.env.From, safePayload)
 
-		if err := injector.tmux.SendToPane(pq.paneID, tagged); err != nil {
+		if err := injector.tmux.SendToPane(paneID, tagged); err != nil {
 			injector.logEvent(logpkg.EventTypeBlocked, item.env.From, pq.target, item.env.MsgID, truncateForLog(err.Error()))
 			item.backoff = nextBackoff(item.backoff)
 			pq.requeueFront(item)

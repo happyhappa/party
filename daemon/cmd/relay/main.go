@@ -131,12 +131,13 @@ func main() {
 				}
 
 				lastMod = info.ModTime()
-				if err := cfg.LoadPaneMap(); err != nil {
+				targets, err := cfgpkg.ReadPaneMap(cfg.PaneMapPath)
+				if err != nil {
 					log.Printf("pane map reload failed: %v", err)
 					continue
 				}
-				injector.UpdateTargets(cfg.PaneTargets)
-				log.Printf("pane map reloaded: %v", cfg.PaneTargets)
+				injector.UpdateTargets(targets)
+				log.Printf("pane map reloaded: %v", targets)
 			}
 		}
 	}()

@@ -149,6 +149,35 @@ func (c *Config) LoadPaneMap() error {
 	return nil
 }
 
+// ReadPaneMap reads pane targets from a file and returns them as a map.
+// This is a pure function that does not mutate any Config state, making it
+// safe to call from concurrent goroutines (e.g., the hot-reload watcher).
+func ReadPaneMap(path string) (map[string]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var v2 paneMapV2
+	if err := json.Unmarshal(raw, &v2); err == nil && v2.Panes != nil {
+		targets := make(map[string]string, len(v2.Panes))
+		for key, val := range v2.Panes {
+			targets[strings.ToLower(key)] = val
+		}
+		return targets, nil
+	}
+
+	var flat map[string]string
+	if err := json.Unmarshal(raw, &flat); err != nil {
+		return nil, fmt.Errorf("decode pane map: %w", err)
+	}
+	targets := make(map[string]string, len(flat))
+	for key, val := range flat {
+		targets[strings.ToLower(key)] = val
+	}
+	return targets, nil
+}
+
 // IsPaneMapStale returns true if the pane map's registered_at timestamp
 // is before lastRecycleTime, indicating stale pane mappings.
 func (c *Config) IsPaneMapStale(lastRecycleTime time.Time) bool {
