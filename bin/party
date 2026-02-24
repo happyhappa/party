@@ -32,7 +32,7 @@ CONFIG_FILE="$HOME/.config/relay/party.conf"
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
 # Per-pane working directories
-OC_DIR="${RELAY_OC_DIR:-$PROJECT_DIR/oc-wt}"
+OC_DIR="${RELAY_OC_DIR:-$PROJECT_DIR/main}"
 CC_DIR="${RELAY_CC_DIR:-$PROJECT_DIR/cc-wt}"
 CX_DIR="${RELAY_CX_DIR:-$PROJECT_DIR/cx-wt}"
 
@@ -142,7 +142,29 @@ CLAUDE_EOF
     fi
 }
 
-write_claude_md "$OC_DIR"
+# OC runs from main — orchestrator-specific CLAUDE.md
+if ! git -C "$OC_DIR" ls-files --error-unmatch CLAUDE.md &>/dev/null; then
+    cat > "$OC_DIR/CLAUDE.md" << 'OC_CLAUDE_EOF'
+## Role: Orchestrator (OC)
+
+You are the orchestrator. You coordinate CC and CX, review code, and merge branches to main.
+
+## Rules
+
+- **Do NOT write code or edit files in this repo.** Delegate coding to CC or CX via relay.
+- **Do NOT commit here.** This is the main checkout. Only merge commits from agent worktree branches.
+- **Use relay to communicate:** `relay send cc "..."`, `relay send cx "..."`
+
+## Infrastructure Rule
+
+Files in `daemon/`, `bin/`, `systemd/` are infrastructure. If you find a bug, send the fix to CC.
+
+## Runtime Artifacts (not tracked)
+
+`.beads/last_compact_offset_*` and `state/` are runtime artifacts — do not commit them.
+OC_CLAUDE_EOF
+    log "Wrote OC CLAUDE.md to $OC_DIR"
+fi
 write_claude_md "$CC_DIR"
 
 # Write project-dirs.json for relay-daemon idle detection (atomic write)
