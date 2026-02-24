@@ -75,7 +75,14 @@ err() {
 
 # Handle 'party stop' subcommand
 if [[ "${1:-}" == "stop" ]]; then
-    SESSION="${2:-party}"
+    shift
+    SESSION="${1:-}"
+    if [[ -z "$SESSION" ]]; then
+        err "Usage: party stop <session-name>"
+        err "Running party sessions:"
+        tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^party-' || err '  (none)'
+        exit 1
+    fi
     # Read RELAY_STATE_DIR from the tmux session's environment
     STATE_DIR=$(tmux show-environment -t "$SESSION" RELAY_STATE_DIR 2>/dev/null | cut -d= -f2-)
     if [[ -z "$STATE_DIR" ]]; then
@@ -218,9 +225,12 @@ log ""
 log "Launching agents with AGENT_ROLE set..."
 
 # Launch agents — panes.json NOT written yet (written after startup delay below)
-tmux send-keys -t "$OC_PANE" "export AGENT_ROLE=oc && $OC_CMD" Enter
-tmux send-keys -t "$CC_PANE" "export AGENT_ROLE=cc && $CC_CMD" Enter
-tmux send-keys -t "$CX_PANE" "export AGENT_ROLE=cx && $CX_CMD" Enter
+# Export all RELAY_* vars directly so the initial shell has them immediately
+# (tmux set-environment only affects newly spawned shells, not existing ones)
+RELAY_EXPORTS="RELAY_MAIN_DIR=$RELAY_MAIN_DIR RELAY_SHARE_DIR=$RELAY_SHARE_DIR RELAY_STATE_DIR=$RELAY_STATE_DIR RELAY_LOG_DIR=$RELAY_LOG_DIR RELAY_INBOX_DIR=$RELAY_INBOX_DIR RELAY_TMUX_SESSION=$RELAY_TMUX_SESSION BEADS_DIR=$BEADS_DIR"
+tmux send-keys -t "$OC_PANE" "export AGENT_ROLE=oc $RELAY_EXPORTS && $OC_CMD" Enter
+tmux send-keys -t "$CC_PANE" "export AGENT_ROLE=cc $RELAY_EXPORTS && $CC_CMD" Enter
+tmux send-keys -t "$CX_PANE" "export AGENT_ROLE=cx $RELAY_EXPORTS && $CX_CMD" Enter
 
 log ""
 log "Agents launched:"
@@ -242,13 +252,18 @@ printf '{"panes":{"oc":"%s","cc":"%s","cx":"%s"},"version":1,"registered_at":"%s
     "$OC_PANE" "$CC_PANE" "$CX_PANE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PANE_MAP"
 
 # Start relay daemon inline (per-project, not systemd)
+# The Go daemon writes its own PID file at $RELAY_STATE_DIR/relay-daemon.pid
 RELAY_PID_FILE="$RELAY_STATE_DIR/relay-daemon.pid"
 if [[ -f "$RELAY_PID_FILE" ]] && kill -0 $(cat "$RELAY_PID_FILE") 2>/dev/null; then
     log "Relay daemon already running (pid=$(cat "$RELAY_PID_FILE"))"
 else
     relay-daemon >> "$RELAY_LOG_DIR/relay.log" 2>&1 & disown
-    echo $! > "$RELAY_PID_FILE"
-    log "Relay daemon started (pid=$!, log=$RELAY_LOG_DIR/relay.log)"
+    sleep 1
+    if [[ -f "$RELAY_PID_FILE" ]]; then
+        log "Relay daemon started (pid=$(cat "$RELAY_PID_FILE"))"
+    else
+        err "Relay daemon failed to start — check $RELAY_LOG_DIR/relay.log"
+    fi
 fi
 
 # Kill stale admin-loop by PID (not pkill which is global)
