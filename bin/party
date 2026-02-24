@@ -288,7 +288,7 @@ $KILLED_STALE && sleep 1
 # The Go daemon writes its own PID file at $RELAY_STATE_DIR/relay-daemon.pid
 relay-daemon >> "$RELAY_LOG_DIR/relay.log" 2>&1 & disown
 sleep 1
-if [[ -f "$RELAY_PID_FILE" ]]; then
+if [[ -f "$RELAY_PID_FILE" ]] && kill -0 $(cat "$RELAY_PID_FILE") 2>/dev/null; then
     log "Relay daemon started (pid=$(cat "$RELAY_PID_FILE"))"
 else
     err "Relay daemon failed to start — check $RELAY_LOG_DIR/relay.log"
@@ -305,7 +305,7 @@ fi
 
 # Auto-start beads daemon if .beads dir exists
 if [[ -d "$RELAY_MAIN_DIR/.beads" ]] && command -v bd &>/dev/null; then
-    if ! bd daemon status --quiet 2>/dev/null; then
+    if ! (cd "$RELAY_MAIN_DIR" && bd daemon status --quiet 2>/dev/null); then
         (cd "$RELAY_MAIN_DIR" && bd daemon start 2>/dev/null) || true
         log "Beads daemon started for $RELAY_MAIN_DIR"
     fi
