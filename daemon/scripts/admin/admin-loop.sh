@@ -39,8 +39,6 @@ log "Started (pid=$$, checkpoint=${CHECKPOINT_INTERVAL}s, health=${HEALTH_CHECK_
 # Initialize to now so first cycle waits a full interval
 LAST_CHECKPOINT=$(date +%s)
 LAST_HEALTH_CHECK=$(date +%s)
-LAST_UNSTICK=$(date +%s)
-UNSTICK_INTERVAL=60
 
 while true; do
     NOW=$(date +%s)
@@ -57,18 +55,6 @@ while true; do
         log "Running health check"
         "$SCRIPT_DIR/admin-health-check.sh" 2>&1 || log "Health check failed (exit $?)"
         LAST_HEALTH_CHECK=$(date +%s)
-    fi
-
-    # Unstick: bare Enter to all panes every 60s
-    if (( NOW - LAST_UNSTICK >= UNSTICK_INTERVAL )); then
-        PANES_FILE="${RELAY_STATE_DIR:-$HOME/llm-share/relay/state}/panes.json"
-        if [[ -f "$PANES_FILE" ]]; then
-            for role in oc cc cx; do
-                pane=$(jq -r ".panes.$role // empty" "$PANES_FILE" 2>/dev/null)
-                [[ -n "$pane" ]] && tmux send-keys -t "$pane" Enter 2>/dev/null || true
-            done
-        fi
-        LAST_UNSTICK=$NOW
     fi
 
     sleep "$SLEEP_INTERVAL"
