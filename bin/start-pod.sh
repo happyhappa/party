@@ -9,6 +9,10 @@ set -euo pipefail
 POD_NAME=""
 ATTACH=true
 LLM_SHARE="${LLM_SHARE:-$HOME/llm-share}"
+RELAY_SHARE_DIR="${RELAY_SHARE_DIR:-$LLM_SHARE}"
+RELAY_STATE_DIR="${RELAY_STATE_DIR:-$RELAY_SHARE_DIR/relay/state}"
+RELAY_LOG_DIR="${RELAY_LOG_DIR:-$RELAY_SHARE_DIR/relay/log}"
+RELAY_INBOX_DIR="${RELAY_INBOX_DIR:-$HOME/.local/share/relay/outbox}"
 
 usage() {
     cat <<EOF
@@ -152,12 +156,12 @@ CONFIG_FILE="$HOME/.config/relay/party.conf"
 
 OC_CMD="${RELAY_OC_CMD:-claude -c --dangerously-skip-permissions}"
 CC_CMD="${RELAY_CC_CMD:-claude --dangerously-skip-permissions}"
-CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share --add-dir ~/.cache}"
+CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir $RELAY_SHARE_DIR --add-dir ~/.cache --add-dir $RELAY_INBOX_DIR/cx}"
 
 log "Starting pod '$POD_NAME'..."
 
 # Ensure relay log exists
-RELAY_LOG="$LLM_SHARE/relay/log/events.jsonl"
+RELAY_LOG="$RELAY_LOG_DIR/events.jsonl"
 mkdir -p "$(dirname "$RELAY_LOG")"
 touch "$RELAY_LOG"
 
@@ -190,7 +194,7 @@ tmux set-option -p -t "$CC_PANE" @role cc
 tmux set-option -p -t "$CX_PANE" @role cx
 
 # Write panes.json for relay daemon
-PANE_MAP="$LLM_SHARE/relay/state/panes.json"
+PANE_MAP="$RELAY_STATE_DIR/panes.json"
 mkdir -p "$(dirname "$PANE_MAP")"
 printf '{"oc":"%s","cc":"%s","cx":"%s","pod":"%s","session":"%s"}\n' \
     "$OC_PANE" "$CC_PANE" "$CX_PANE" "$POD_NAME" "$SESSION" > "$PANE_MAP"
@@ -219,9 +223,9 @@ log ""
 log "Launching agents with AGENT_ROLE and POD_NAME set..."
 
 # Launch agents with environment variables (3.2.3: AGENT_ROLE injection)
-tmux send-keys -t "$SESSION:main.0" "export AGENT_ROLE=oc POD_NAME=$POD_NAME && $OC_CMD" Enter
-tmux send-keys -t "$SESSION:main.1" "export AGENT_ROLE=cc POD_NAME=$POD_NAME && $CC_CMD" Enter
-tmux send-keys -t "$SESSION:main.2" "export AGENT_ROLE=cx POD_NAME=$POD_NAME && $CX_CMD" Enter
+tmux send-keys -t "$SESSION:main.0" "export AGENT_ROLE=oc POD_NAME=$POD_NAME RELAY_SHARE_DIR=$RELAY_SHARE_DIR RELAY_STATE_DIR=$RELAY_STATE_DIR RELAY_LOG_DIR=$RELAY_LOG_DIR RELAY_INBOX_DIR=$RELAY_INBOX_DIR RELAY_TMUX_SESSION=$SESSION && $OC_CMD" Enter
+tmux send-keys -t "$SESSION:main.1" "export AGENT_ROLE=cc POD_NAME=$POD_NAME RELAY_SHARE_DIR=$RELAY_SHARE_DIR RELAY_STATE_DIR=$RELAY_STATE_DIR RELAY_LOG_DIR=$RELAY_LOG_DIR RELAY_INBOX_DIR=$RELAY_INBOX_DIR RELAY_TMUX_SESSION=$SESSION && $CC_CMD" Enter
+tmux send-keys -t "$SESSION:main.2" "export AGENT_ROLE=cx POD_NAME=$POD_NAME RELAY_SHARE_DIR=$RELAY_SHARE_DIR RELAY_STATE_DIR=$RELAY_STATE_DIR RELAY_LOG_DIR=$RELAY_LOG_DIR RELAY_INBOX_DIR=$RELAY_INBOX_DIR RELAY_TMUX_SESSION=$SESSION && $CX_CMD" Enter
 
 log ""
 log "Pod '$POD_NAME' started!"

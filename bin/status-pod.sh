@@ -9,6 +9,9 @@ set -euo pipefail
 POD_NAME=""
 JSON_OUTPUT=false
 LLM_SHARE="${LLM_SHARE:-$HOME/llm-share}"
+RELAY_SHARE_DIR="${RELAY_SHARE_DIR:-$LLM_SHARE}"
+RELAY_STATE_DIR="${RELAY_STATE_DIR:-$RELAY_SHARE_DIR/relay/state}"
+RELAY_LOG_DIR="${RELAY_LOG_DIR:-$RELAY_SHARE_DIR/relay/log}"
 
 usage() {
     cat <<EOF
@@ -134,7 +137,7 @@ if [[ -z "$POD_NAME" ]]; then
     if [[ -f ".pod-name" ]]; then
         POD_NAME=$(cat ".pod-name")
     else
-        PANE_MAP="$LLM_SHARE/relay/state/panes.json"
+        PANE_MAP="$RELAY_STATE_DIR/panes.json"
         if [[ -f "$PANE_MAP" ]]; then
             POD_NAME=$(grep -o '"pod":"[^"]*"' "$PANE_MAP" 2>/dev/null | cut -d'"' -f4 || true)
         fi
@@ -273,7 +276,7 @@ if [[ -n "$LAST_CHANGE" ]]; then
 fi
 
 # Check relay activity
-RELAY_LOG="$LLM_SHARE/relay/log/events.jsonl"
+RELAY_LOG="$RELAY_LOG_DIR/events.jsonl"
 if [[ -f "$RELAY_LOG" ]]; then
     LAST_EVENT=$(tail -1 "$RELAY_LOG" 2>/dev/null | grep -o '"ts_ms":[0-9]*' | cut -d: -f2 || true)
     if [[ -n "$LAST_EVENT" ]]; then

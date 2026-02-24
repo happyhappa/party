@@ -59,8 +59,9 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Load loads configuration from ~/llm-share/config/context-capture.yaml,
-// creating a sample file if none exists.
+// Load loads configuration from RELAY_CONTEXT_CAPTURE_CONFIG if set,
+// otherwise ~/llm-share/config/context-capture.yaml. Creates a sample file
+// if none exists.
 func Load() (*Config, error) {
 	path, err := configPath()
 	if err != nil {
@@ -93,6 +94,9 @@ func LoadFromPath(path string) (*Config, error) {
 }
 
 func configPath() (string, error) {
+	if configured := os.Getenv("RELAY_CONTEXT_CAPTURE_CONFIG"); configured != "" {
+		return configured, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err

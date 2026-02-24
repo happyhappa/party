@@ -9,6 +9,8 @@ set -euo pipefail
 POD_NAME=""
 SESSION=""
 LLM_SHARE="${LLM_SHARE:-$HOME/llm-share}"
+RELAY_SHARE_DIR="${RELAY_SHARE_DIR:-$LLM_SHARE}"
+RELAY_STATE_DIR="${RELAY_STATE_DIR:-$RELAY_SHARE_DIR/relay/state}"
 
 usage() {
     cat <<EOF
@@ -24,7 +26,7 @@ OPTIONS:
     -h, --help          Show this help
 
 OUTPUT:
-    Writes to: \$LLM_SHARE/relay/state/panes.json
+    Writes to: \$RELAY_STATE_DIR/panes.json
 
     Format:
     {
@@ -118,7 +120,7 @@ for pane_id in "$OC_PANE" "$CC_PANE" "$CX_PANE"; do
 done
 
 # Write panes.json
-PANE_MAP="$LLM_SHARE/relay/state/panes.json"
+PANE_MAP="$RELAY_STATE_DIR/panes.json"
 mkdir -p "$(dirname "$PANE_MAP")"
 
 # Determine pod name
