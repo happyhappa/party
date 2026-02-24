@@ -9,6 +9,8 @@ set -euo pipefail
 POD_NAME=""
 FORCE=false
 LLM_SHARE="${LLM_SHARE:-$HOME/llm-share}"
+RELAY_SHARE_DIR="${RELAY_SHARE_DIR:-$LLM_SHARE}"
+RELAY_STATE_DIR="${RELAY_STATE_DIR:-$RELAY_SHARE_DIR/relay/state}"
 
 usage() {
     cat <<EOF
@@ -74,7 +76,7 @@ if [[ -z "$POD_NAME" ]]; then
         POD_NAME=$(cat ".pod-name")
     else
         # Try to find from panes.json
-        PANE_MAP="$LLM_SHARE/relay/state/panes.json"
+        PANE_MAP="$RELAY_STATE_DIR/panes.json"
         if [[ -f "$PANE_MAP" ]]; then
             POD_NAME=$(grep -o '"pod":"[^"]*"' "$PANE_MAP" 2>/dev/null | cut -d'"' -f4 || true)
         fi
@@ -182,7 +184,7 @@ STATE
 fi
 
 # Clear panes.json if it points to this pod
-PANE_MAP="$LLM_SHARE/relay/state/panes.json"
+PANE_MAP="$RELAY_STATE_DIR/panes.json"
 if [[ -f "$PANE_MAP" ]]; then
     CURRENT_POD=$(grep -o '"pod":"[^"]*"' "$PANE_MAP" 2>/dev/null | cut -d'"' -f4 || true)
     if [[ "$CURRENT_POD" == "$POD_NAME" ]]; then

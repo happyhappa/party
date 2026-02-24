@@ -6,7 +6,7 @@
 # Started as a background process by the party launcher.
 #
 # Environment:
-#   RELAY_STATE_DIR          - State directory (default: ~/llm-share/relay/state)
+#   RELAY_STATE_DIR          - State directory (required)
 #   RELAY_CHECKPOINT_INTERVAL - Checkpoint interval in seconds (default: 600)
 #   RELAY_HEALTH_CHECK_INTERVAL - Health check interval in seconds (default: 300)
 #
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATE_DIR="${RELAY_STATE_DIR:-$HOME/llm-share/relay/state}"
+STATE_DIR="${RELAY_STATE_DIR:?RELAY_STATE_DIR not set — must be exported by bin/party}"
 CHECKPOINT_INTERVAL="${RELAY_CHECKPOINT_INTERVAL:-600}"
 HEALTH_CHECK_INTERVAL="${RELAY_HEALTH_CHECK_INTERVAL:-300}"
 SLEEP_INTERVAL=30

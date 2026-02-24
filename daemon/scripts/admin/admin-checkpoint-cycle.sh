@@ -6,14 +6,15 @@
 # OC/CC panes and /prompts:checkpoint into CX pane. Fire-and-forget.
 #
 # Environment:
-#   RELAY_STATE_DIR - State directory (default: ~/llm-share/relay/state)
+#   RELAY_STATE_DIR - State directory (required)
 #
 
 set -euo pipefail
 
-STATE_DIR="${RELAY_STATE_DIR:-$HOME/llm-share/relay/state}"
+STATE_DIR="${RELAY_STATE_DIR:?RELAY_STATE_DIR not set — must be exported by bin/party}"
 LOG_FILE="$STATE_DIR/checkpoints.log"
 PANES_FILE="$STATE_DIR/panes.json"
+CHK_ID_FILE="$STATE_DIR/cx-chk-id"
 
 # Guard: skip if checkpoint dispatched within last 8 minutes
 LAST_DISPATCH=$(grep '"type":"checkpoint-cycle"' "$LOG_FILE" 2>/dev/null | tail -1 | jq -r '.timestamp // empty' 2>/dev/null || true)
@@ -77,6 +78,9 @@ should_backstop() {
 
 # Generate cycle nonce
 CHK_ID="chk-$(date +%s)-$(head -c 4 /dev/urandom | xxd -p)"
+
+# Persist checkpoint ID for CX handoff before injection.
+printf '%s\n' "$CHK_ID" > "$CHK_ID_FILE"
 
 # Track which panes were dispatched to
 DISPATCHED=()

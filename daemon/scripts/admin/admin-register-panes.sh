@@ -6,17 +6,18 @@
 # writes panes.json atomically with version increment.
 #
 # Environment:
-#   RELAY_STATE_DIR - State directory (default: ~/llm-share/relay/state)
-#   TMUX_SESSION    - Session name (default: auto-detect or "party")
+#   RELAY_STATE_DIR    - State directory (required)
+#   RELAY_TMUX_SESSION - Session name (preferred)
+#   TMUX_SESSION       - Session name (legacy fallback)
 #
 
 set -euo pipefail
 
-STATE_DIR="${RELAY_STATE_DIR:-$HOME/llm-share/relay/state}"
+STATE_DIR="${RELAY_STATE_DIR:?RELAY_STATE_DIR not set — must be exported by bin/party}"
 PANES_FILE="$STATE_DIR/panes.json"
 
 # Determine session name
-SESSION="${TMUX_SESSION:-$(tmux display-message -p '#{session_name}' 2>/dev/null || echo 'party')}"
+SESSION="${RELAY_TMUX_SESSION:-${TMUX_SESSION:-$(tmux display-message -p '#{session_name}' 2>/dev/null || echo 'party')}}"
 
 # Read current version
 CURRENT_VERSION=$(jq -r '.version // 0' "$PANES_FILE" 2>/dev/null || echo "0")

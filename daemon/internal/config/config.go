@@ -39,16 +39,16 @@ func Default() *Config {
 	home, _ := os.UserHomeDir()
 	shareDir := filepath.Join(home, "llm-share")
 	return &Config{
-		ShareDir:          shareDir,
-		InboxDir:          filepath.Join(home, ".local", "share", "relay", "outbox"),
-		LogDir:            filepath.Join(shareDir, "relay", "log"),
-		StateDir:          filepath.Join(shareDir, "relay", "state"),
+		ShareDir:          "",
+		InboxDir:          "",
+		LogDir:            "",
+		StateDir:          "",
 		AttacksDir:        filepath.Join(shareDir, "attacks"),
 		StuckThreshold:    5 * time.Minute,
 		NagInterval:       5 * time.Minute,
 		MaxNagDuration:    30 * time.Minute,
-		TmuxSession:       "party",
-		PaneMapPath:       filepath.Join(shareDir, "relay", "state", "panes.json"),
+		TmuxSession:       "",
+		PaneMapPath:       "",
 		PaneTargets:       map[string]string{},
 		PromptGating:      "all",
 		QueueMaxAge:       5 * time.Minute,
@@ -56,7 +56,7 @@ func Default() *Config {
 		PaneTailInterval:  30 * time.Second,
 		PaneTailLines:     150,
 		PaneTailRotations: 7,
-		PaneTailDir:       filepath.Join(shareDir, "relay", "pane-tails"),
+		PaneTailDir:       "",
 	}
 }
 
@@ -84,6 +84,26 @@ func Load() (*Config, error) {
 	overrideDuration(&cfg.QueueMaxAge, "RELAY_QUEUE_MAX_AGE")
 
 	return cfg, nil
+}
+
+func (c *Config) Validate() error {
+	var missing []string
+	if c.InboxDir == "" {
+		missing = append(missing, "RELAY_INBOX_DIR")
+	}
+	if c.StateDir == "" {
+		missing = append(missing, "RELAY_STATE_DIR")
+	}
+	if c.LogDir == "" {
+		missing = append(missing, "RELAY_LOG_DIR")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("required env vars not set: %s", strings.Join(missing, ", "))
+	}
+	if c.PaneMapPath == "" {
+		c.PaneMapPath = filepath.Join(c.StateDir, "panes.json")
+	}
+	return nil
 }
 
 // paneMapV2 represents the new nested pane map format with metadata.

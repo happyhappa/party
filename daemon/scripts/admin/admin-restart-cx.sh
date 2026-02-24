@@ -5,17 +5,21 @@
 # Sends Ctrl-C, waits for shell prompt, relaunches Codex.
 #
 # Environment:
-#   RELAY_STATE_DIR - State directory (default: ~/llm-share/relay/state)
-#   RELAY_CX_CMD    - CX launch command (default: codex with standard flags)
+#   RELAY_STATE_DIR - State directory (required)
+#   RELAY_SHARE_DIR - Relay share directory (required for default RELAY_CX_CMD)
+#   RELAY_INBOX_DIR - Relay inbox directory (required for default RELAY_CX_CMD)
+#   RELAY_CX_CMD    - CX launch command (default: codex with env-derived add-dir paths)
 #
 
 set -euo pipefail
 
-STATE_DIR="${RELAY_STATE_DIR:-$HOME/llm-share/relay/state}"
+STATE_DIR="${RELAY_STATE_DIR:?RELAY_STATE_DIR not set — must be exported by bin/party}"
 LOG_FILE="$STATE_DIR/checkpoints.log"
 PANES_FILE="$STATE_DIR/panes.json"
+SHARE_DIR="${RELAY_SHARE_DIR:?RELAY_SHARE_DIR not set — must be exported by bin/party}"
+INBOX_DIR="${RELAY_INBOX_DIR:?RELAY_INBOX_DIR not set — must be exported by bin/party}"
 
-CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share --add-dir ~/.cache --add-dir ~/.local/share/relay/outbox/cx}"
+CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir $SHARE_DIR --add-dir ~/.cache --add-dir $INBOX_DIR/cx}"
 
 # Read CX pane ID
 CX_PANE=$(jq -r '.panes.cx // empty' "$PANES_FILE")

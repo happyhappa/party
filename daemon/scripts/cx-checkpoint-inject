@@ -2,14 +2,15 @@
 # Injects /prompts:checkpoint into the CX pane.
 # Optional arg: CHK_ID to write as handoff file for CX prompt template.
 set -euo pipefail
-PANES_FILE="${RELAY_STATE_DIR:-$HOME/llm-share/relay/state}/panes.json"
+STATE_DIR="${RELAY_STATE_DIR:?RELAY_STATE_DIR not set — must be exported by bin/party}"
+PANES_FILE="$STATE_DIR/panes.json"
+CHK_ID_FILE="$STATE_DIR/cx-chk-id"
 CX_PANE=$(jq -r '.panes.cx // empty' "$PANES_FILE")
 if [[ -z "$CX_PANE" ]]; then
     echo "ERROR: CX pane not registered in $PANES_FILE" >&2
     exit 1
 fi
-# Write CHK_ID handoff file for CX prompt template
-if [[ -n "${1:-}" ]]; then
-    echo "$1" > /tmp/cx-chk-id
+if [[ ! -s "$CHK_ID_FILE" ]]; then
+    echo "WARN: checkpoint id handoff file missing at $CHK_ID_FILE" >&2
 fi
 tmux-inject "$CX_PANE" "/prompts:checkpoint"

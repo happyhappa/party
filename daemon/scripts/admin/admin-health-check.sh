@@ -6,7 +6,7 @@
 # stale output. Auto-restarts CX if dead, auto-compacts CX if context <= 60%.
 #
 # Environment:
-#   RELAY_STATE_DIR        - State directory (default: ~/llm-share/relay/state)
+#   RELAY_STATE_DIR        - State directory (required)
 #   RELAY_ADMIN_ALERT_HOOK - Optional alert command
 #   RELAY_CX_CMD           - CX launch command (for restart-cx)
 #
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATE_DIR="${RELAY_STATE_DIR:-$HOME/llm-share/relay/state}"
+STATE_DIR="${RELAY_STATE_DIR:?RELAY_STATE_DIR not set — must be exported by bin/party}"
 LOG_FILE="$STATE_DIR/checkpoints.log"
 PANES_FILE="$STATE_DIR/panes.json"
 
