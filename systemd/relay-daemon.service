@@ -1,3 +1,6 @@
+# NOTE: bin/party now starts relay-daemon inline per-session with PID tracking.
+# This systemd service is retained for standalone/legacy use only.
+
 [Unit]
 Description=LLM Relay Daemon
 After=network.target

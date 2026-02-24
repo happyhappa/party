@@ -23,10 +23,22 @@
 
 set -euo pipefail
 
-SESSION="${1:-party}"
 PROJECT_DIR="${2:-$PWD}"
-LLM_SHARE="$HOME/llm-share"
+PROJECT_NAME=$(basename "$PROJECT_DIR")
+SESSION="${1:-party-${PROJECT_NAME}}"
 CONFIG_FILE="$HOME/.config/relay/party.conf"
+
+# Per-project relay state (outside git, not tracked)
+RELAY_SHARE_DIR="$PROJECT_DIR/.relay"
+export RELAY_MAIN_DIR="$PROJECT_DIR/main"
+export RELAY_SHARE_DIR
+export RELAY_STATE_DIR="$RELAY_SHARE_DIR/state"
+export RELAY_LOG_DIR="$RELAY_SHARE_DIR/log"
+export RELAY_INBOX_DIR="$RELAY_SHARE_DIR/outbox"
+export BEADS_DIR="$RELAY_MAIN_DIR/.beads"
+export RELAY_TMUX_SESSION="$SESSION"
+
+RELAY_LOG="$RELAY_LOG_DIR/events.jsonl"
 
 # Source optional config
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
@@ -39,10 +51,7 @@ CX_DIR="${RELAY_CX_DIR:-$PROJECT_DIR/cx-wt}"
 # Per-agent launch commands
 OC_CMD="${RELAY_OC_CMD:-claude -c --model claude-opus-4-6 --dangerously-skip-permissions}"
 CC_CMD="${RELAY_CC_CMD:-claude --model claude-opus-4-6 --dangerously-skip-permissions}"
-CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share --add-dir ~/.cache --add-dir ~/.local/share/relay/outbox/cx}"
-
-RELAY_LOG="$LLM_SHARE/relay/log/events.jsonl"
-RELAY_STATE_DIR="$LLM_SHARE/relay/state"
+CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir $RELAY_SHARE_DIR --add-dir ~/.cache --add-dir $RELAY_INBOX_DIR/cx}"
 
 # Resolve admin-loop.sh path (follows symlinks to find the real script dir)
 ADMIN_LOOP="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../daemon/scripts/admin/admin-loop.sh"
@@ -64,14 +73,41 @@ err() {
     echo -e "${RED}[party]${NC} $1" >&2
 }
 
+# Handle 'party stop' subcommand
+if [[ "${1:-}" == "stop" ]]; then
+    shift
+    SESSION="${1:-}"
+    if [[ -z "$SESSION" ]]; then
+        err "Usage: party stop <session-name>"
+        err "Running party sessions:"
+        tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^party-' || err '  (none)'
+        exit 1
+    fi
+    # Read RELAY_STATE_DIR from the tmux session's environment
+    STATE_DIR=$(tmux show-environment -t "$SESSION" RELAY_STATE_DIR 2>/dev/null | cut -d= -f2-)
+    if [[ -z "$STATE_DIR" ]]; then
+        err "Cannot find RELAY_STATE_DIR for session $SESSION"
+        exit 1
+    fi
+    log "Stopping party session '$SESSION'..."
+    # Kill admin-loop
+    [[ -f "$STATE_DIR/admin-loop.pid" ]] && kill $(cat "$STATE_DIR/admin-loop.pid") 2>/dev/null || true
+    # Kill relay daemon
+    [[ -f "$STATE_DIR/relay-daemon.pid" ]] && kill $(cat "$STATE_DIR/relay-daemon.pid") 2>/dev/null || true
+    # Kill tmux session
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+    log "Session '$SESSION' stopped."
+    exit 0
+fi
+
 # Check if session already exists
 if tmux has-session -t "$SESSION" 2>/dev/null; then
     log "Session '$SESSION' already exists. Attaching..."
     exec tmux attach -t "$SESSION"
 fi
 
-# Ensure relay log file exists for tail
-mkdir -p "$(dirname "$RELAY_LOG")"
+# Ensure relay directories and log file exist
+mkdir -p "$RELAY_STATE_DIR" "$RELAY_LOG_DIR" "$RELAY_INBOX_DIR"/{oc,cc,cx}
 touch "$RELAY_LOG"
 
 log "Creating session '$SESSION' with 3-pane layout..."
@@ -106,6 +142,11 @@ tmux set-option -t "$SESSION" pane-border-format " #{pane_title} "
 tmux set-option -p -t "$OC_PANE" @role oc
 tmux set-option -p -t "$CC_PANE" @role cc
 tmux set-option -p -t "$CX_PANE" @role cx
+
+# Propagate relay env vars to all panes in this session
+for var in RELAY_MAIN_DIR RELAY_SHARE_DIR RELAY_STATE_DIR RELAY_LOG_DIR RELAY_INBOX_DIR RELAY_TMUX_SESSION BEADS_DIR; do
+    tmux set-environment -t "$SESSION" "$var" "${!var}"
+done
 
 # Select OC pane as default
 tmux select-pane -t "$OC_PANE"
@@ -171,8 +212,7 @@ write_claude_md "$CC_DIR"
 dir_to_slug() { echo "-${1#/}" | tr '/_' '--'; }
 OC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$OC_DIR")"
 CC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$CC_DIR")"
-PROJECT_DIRS_JSON="$LLM_SHARE/relay/state/project-dirs.json"
-mkdir -p "$(dirname "$PROJECT_DIRS_JSON")"
+PROJECT_DIRS_JSON="$RELAY_STATE_DIR/project-dirs.json"
 TMP_PROJ="$PROJECT_DIRS_JSON.tmp.$$"
 printf '{"oc":"%s","cc":"%s"}\n' "$OC_PROJECT_DIR" "$CC_PROJECT_DIR" > "$TMP_PROJ"
 mv "$TMP_PROJ" "$PROJECT_DIRS_JSON"
@@ -185,9 +225,12 @@ log ""
 log "Launching agents with AGENT_ROLE set..."
 
 # Launch agents — panes.json NOT written yet (written after startup delay below)
-tmux send-keys -t "$OC_PANE" "export AGENT_ROLE=oc && $OC_CMD" Enter
-tmux send-keys -t "$CC_PANE" "export AGENT_ROLE=cc && $CC_CMD" Enter
-tmux send-keys -t "$CX_PANE" "export AGENT_ROLE=cx && $CX_CMD" Enter
+# Export all RELAY_* vars directly so the initial shell has them immediately
+# (tmux set-environment only affects newly spawned shells, not existing ones)
+RELAY_EXPORTS="RELAY_MAIN_DIR=$RELAY_MAIN_DIR RELAY_SHARE_DIR=$RELAY_SHARE_DIR RELAY_STATE_DIR=$RELAY_STATE_DIR RELAY_LOG_DIR=$RELAY_LOG_DIR RELAY_INBOX_DIR=$RELAY_INBOX_DIR RELAY_TMUX_SESSION=$RELAY_TMUX_SESSION BEADS_DIR=$BEADS_DIR"
+tmux send-keys -t "$OC_PANE" "export AGENT_ROLE=oc $RELAY_EXPORTS && $OC_CMD" Enter
+tmux send-keys -t "$CC_PANE" "export AGENT_ROLE=cc $RELAY_EXPORTS && $CC_CMD" Enter
+tmux send-keys -t "$CX_PANE" "export AGENT_ROLE=cx $RELAY_EXPORTS && $CX_CMD" Enter
 
 log ""
 log "Agents launched:"
@@ -202,41 +245,37 @@ sleep 3
 
 # Write pane map for relay daemon (3 panes, no admin)
 PANE_MAP="$RELAY_STATE_DIR/panes.json"
-mkdir -p "$RELAY_STATE_DIR"
 log "Writing pane map to $PANE_MAP"
 printf '{"panes":{"oc":"%s","cc":"%s","cx":"%s"},"version":1,"registered_at":"%s"}\n' \
     "$OC_PANE" "$CC_PANE" "$CX_PANE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PANE_MAP"
 
-# Start relay daemon if not running
-if ! pgrep -f relay-daemon &>/dev/null; then
-    if systemctl --user is-enabled relay-daemon &>/dev/null; then
-        systemctl --user start relay-daemon
+# Start relay daemon inline (per-project, not systemd)
+# The Go daemon writes its own PID file at $RELAY_STATE_DIR/relay-daemon.pid
+RELAY_PID_FILE="$RELAY_STATE_DIR/relay-daemon.pid"
+if [[ -f "$RELAY_PID_FILE" ]] && kill -0 $(cat "$RELAY_PID_FILE") 2>/dev/null; then
+    log "Relay daemon already running (pid=$(cat "$RELAY_PID_FILE"))"
+else
+    relay-daemon >> "$RELAY_LOG_DIR/relay.log" 2>&1 & disown
+    sleep 1
+    if [[ -f "$RELAY_PID_FILE" ]]; then
+        log "Relay daemon started (pid=$(cat "$RELAY_PID_FILE"))"
     else
-        relay-daemon &disown
+        err "Relay daemon failed to start — check $RELAY_LOG_DIR/relay.log"
     fi
-    log "Relay daemon started"
 fi
 
-# Kill stale admin-loop if running (pkill catches strays even without a valid PID file)
+# Kill stale admin-loop by PID (not pkill which is global)
 ADMIN_PID_FILE="$RELAY_STATE_DIR/admin-loop.pid"
-pkill -f admin-loop.sh 2>/dev/null || true
-rm -f "$ADMIN_PID_FILE"
-
-# Cleanup trap: kill admin-loop on session exit
-cleanup() {
-    pkill -f admin-loop.sh 2>/dev/null || true
-    if [[ -f "$ADMIN_PID_FILE" ]]; then
-        kill "$(cat "$ADMIN_PID_FILE")" 2>/dev/null || true
-        rm -f "$ADMIN_PID_FILE"
-    fi
-}
-trap cleanup EXIT
+if [[ -f "$ADMIN_PID_FILE" ]]; then
+    kill $(cat "$ADMIN_PID_FILE") 2>/dev/null || true
+    rm -f "$ADMIN_PID_FILE"
+fi
 
 # Start admin loop as background process
 if [[ -x "$ADMIN_LOOP" ]]; then
-    RELAY_STATE_DIR="$RELAY_STATE_DIR" "$ADMIN_LOOP" >> "$LLM_SHARE/relay/log/admin-loop.log" 2>&1 & disown
+    "$ADMIN_LOOP" >> "$RELAY_LOG_DIR/admin-loop.log" 2>&1 & disown
     echo $! > "$ADMIN_PID_FILE"
-    log "Admin loop started (pid=$!, log=$LLM_SHARE/relay/log/admin-loop.log)"
+    log "Admin loop started (pid=$!, log=$RELAY_LOG_DIR/admin-loop.log)"
 else
     err "Admin loop not found at $ADMIN_LOOP — run install.sh first"
 fi

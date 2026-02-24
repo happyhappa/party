@@ -7,20 +7,21 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+REPO_ROOT="$(dirname "$PROJECT_DIR")"
 
 # Guard: must be run from the main checkout, never from a worktree
-MAIN_CHECKOUT="$HOME/Sandbox/personal/new_party/main"
-if [[ "$(dirname "$PROJECT_DIR")" != "$MAIN_CHECKOUT" ]]; then
-    echo "[install] ERROR: must be run from the main checkout ($MAIN_CHECKOUT)." >&2
-    echo "[install] ERROR: You are in: $PROJECT_DIR" >&2
+# The main checkout is expected at <project>/main
+MAIN_CHECKOUT="$REPO_ROOT"
+if [[ "$(basename "$MAIN_CHECKOUT")" != "main" ]]; then
+    echo "[install] ERROR: must be run from the main checkout (expected .../main/daemon/scripts/)." >&2
+    echo "[install] ERROR: You are in: $MAIN_CHECKOUT" >&2
     echo "[install] ERROR: Running install.sh from a worktree publishes the wrong infra. Aborting." >&2
     exit 1
 fi
 
 # Configuration
-LLM_SHARE="$HOME/llm-share"
 CLAUDE_COMMANDS="$HOME/.claude/commands"
 BIN_DIR="$HOME/.local/bin"
 
@@ -54,20 +55,11 @@ done
 log "Installing LLM Relay Daemon"
 echo ""
 
-# 1. Create directory structure
-info "Creating directory structure..."
-mkdir -p "$LLM_SHARE"/{relay/{outbox/{oc,cc,cx},log,state/locks},attacks,recovery,reviews,shared/{runbooks,docs}}
+# 1. Create bin directory (relay directories are created per-project by bin/party)
+info "Creating bin directory..."
 mkdir -p "$BIN_DIR"
 
-# Initialize state files if missing
-[[ -f "$LLM_SHARE/relay/state/agents.json" ]] || echo '{}' > "$LLM_SHARE/relay/state/agents.json"
-
-# Placeholder files for Phase 3b
-touch "$LLM_SHARE/relay/state/checkpoint.json"
-touch "$LLM_SHARE/relay/state/handoff-marker"
-touch "$LLM_SHARE/relay/state/health.json"
-
-log "  ✓ Directory structure created"
+log "  ✓ Bin directory created"
 
 # 2. Build relay daemon
 info "Building relay daemon..."
