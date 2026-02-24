@@ -107,6 +107,40 @@ func main() {
 		cancel()
 	}()
 
+	// Hot-reload panes.json when it changes on disk.
+	go func() {
+		var lastMod time.Time
+		if info, err := os.Stat(cfg.PaneMapPath); err == nil {
+			lastMod = info.ModTime()
+		}
+
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				info, err := os.Stat(cfg.PaneMapPath)
+				if err != nil {
+					continue
+				}
+				if info.ModTime().Equal(lastMod) {
+					continue
+				}
+
+				lastMod = info.ModTime()
+				if err := cfg.LoadPaneMap(); err != nil {
+					log.Printf("pane map reload failed: %v", err)
+					continue
+				}
+				injector.UpdateTargets(cfg.PaneTargets)
+				log.Printf("pane map reloaded: %v", cfg.PaneTargets)
+			}
+		}
+	}()
+
 	errCh := make(chan error, 2)
 
 	go func() {
