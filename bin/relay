@@ -26,12 +26,8 @@ send_message() {
   local filename="${timestamp}-${rand}.msg"
 
   # Write RMF v2 format: TO header, KIND header, separator, body
-  cat > "${outbox_dir}/${filename}" << EOF
-TO: ${to}
-KIND: ${kind}
----
-${msg}
-EOF
+  # Use printf to avoid shell expansion in message body
+  printf 'TO: %s\nKIND: %s\n---\n%s\n' "$to" "$kind" "$msg" > "${outbox_dir}/${filename}"
 }
 
 cmd="${1:-}"
