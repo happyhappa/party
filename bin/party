@@ -229,7 +229,7 @@ OC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$OC_DIR")"
 CC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$CC_DIR")"
 PROJECT_DIRS_JSON="$RELAY_STATE_DIR/project-dirs.json"
 TMP_PROJ="$PROJECT_DIRS_JSON.tmp.$$"
-printf '{"oc":"%s","cc":"%s"}\n' "$OC_PROJECT_DIR" "$CC_PROJECT_DIR" > "$TMP_PROJ"
+printf '{"oc":"%s","cc":"%s","cx":"%s"}\n' "$OC_PROJECT_DIR" "$CC_PROJECT_DIR" "$CX_DIR" > "$TMP_PROJ"
 mv "$TMP_PROJ" "$PROJECT_DIRS_JSON"
 log "Project dirs written to $PROJECT_DIRS_JSON"
 

@@ -110,14 +110,30 @@ if [[ -n "$CC_PANE" ]]; then
     fi
 fi
 
-# Dispatch to CX only if it's at an idle prompt
+is_cx_idle() {
+    local cx_dir
+    cx_dir=$(jq -r '.cx // empty' "$STATE_DIR/project-dirs.json" 2>/dev/null)
+    [[ -z "$cx_dir" ]] && return 1  # can't determine, assume active
+    local last_dispatch
+    last_dispatch=$(cat "$LAST_DISPATCH_FILE" 2>/dev/null || echo 0)
+    # Check if any source files changed since last dispatch + grace period
+    local cutoff_time
+    cutoff_time=$(( last_dispatch + GRACE_PERIOD ))
+    local recent
+    recent=$(find "$cx_dir" -maxdepth 3 -newer "$LAST_DISPATCH_FILE" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.go' -o -name '*.py' -o -name '*.rs' \) 2>/dev/null | head -1)
+    if [[ -z "$recent" ]]; then
+        return 0  # idle — no source files changed
+    fi
+    return 1  # active
+}
+
+# Dispatch to CX
 CX_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cx // empty')
 if [[ -n "$CX_PANE" ]]; then
-    CX_TAIL=$(tmux capture-pane -t "$CX_PANE" -p -S -5 2>/dev/null || true)
-    if echo "$CX_TAIL" | grep -qE '(context left|\? for shortcuts)'; then
-        cx-checkpoint-inject "$CHK_ID" && DISPATCHED+=("cx") || echo "WARN: CX inject failed"
+    if [[ "$FORCE_DISPATCH" != "true" ]] && is_cx_idle; then
+        echo "SKIP: CX idle, skipping checkpoint"
     else
-        echo "SKIP: CX not at idle prompt, skipping checkpoint"
+        cx-checkpoint-inject "$CHK_ID" && DISPATCHED+=("cx") || echo "WARN: CX inject failed"
     fi
 fi
 
