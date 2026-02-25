@@ -81,7 +81,7 @@ If critical issues found:
 - ⚠️ Haiku integration incomplete (autogen not active)
 - ~~⚠️ Summary watcher not deployed~~ → DEAD CODE, being removed (summarywatcher package unused)
 - ~~⚠️ CX Enter timing~~ → ✅ RESOLVED: `paste-buffer -p` adds bracketed paste boundaries (77ea8d3)
-- ⚠️ CC relay piping — `cat file | relay send oc -` delivers "-" instead of stdin content (sprint fix in progress)
+- ~~⚠️ CC relay piping~~ → ✅ RESOLVED: relay CLI now reads stdin when `-` passed as message arg (898ac64)
 - ~~⚠️ Large payload injection~~ → ✅ RESOLVED: load-buffer + paste-buffer replaces send-keys for payloads (ee57e79, 77ea8d3)
 
 ---
