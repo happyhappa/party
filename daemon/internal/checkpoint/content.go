@@ -62,7 +62,24 @@ func WriteBead(c *Content) (string, error) {
 	}
 
 	args = append(args, "--body", c.Content)
-	cmd := exec.Command("bd", args...)
+	bdPath, err := exec.LookPath("bd")
+	if err != nil {
+		for _, p := range []string{
+			filepath.Join(os.Getenv("HOME"), "go", "bin", "bd"),
+			filepath.Join(os.Getenv("HOME"), ".local", "bin", "bd"),
+		} {
+			if _, statErr := os.Stat(p); statErr == nil {
+				bdPath = p
+				err = nil
+				break
+			}
+		}
+		if err != nil {
+			return "", fmt.Errorf("bd not found in PATH or common locations: %w", err)
+		}
+	}
+
+	cmd := exec.Command(bdPath, args...)
 	if beadsDir := os.Getenv("BEADS_DIR"); beadsDir != "" {
 		dbPath := filepath.Join(beadsDir, "beads.db")
 		if _, err := os.Stat(dbPath); err == nil {
