@@ -306,7 +306,7 @@ $KILLED_STALE && sleep 1
 
 # Start relay daemon inline (per-project, not systemd)
 # The Go daemon writes its own PID file at $RELAY_STATE_DIR/relay-daemon.pid
-relay-daemon >> "$RELAY_LOG_DIR/relay.log" 2>&1 & disown
+setsid relay-daemon >> "$RELAY_LOG_DIR/relay.log" 2>&1 &
 sleep 1
 if [[ -f "$RELAY_PID_FILE" ]] && kill -0 $(cat "$RELAY_PID_FILE") 2>/dev/null; then
     log "Relay daemon started (pid=$(cat "$RELAY_PID_FILE"))"
@@ -316,7 +316,7 @@ fi
 
 # Start admin loop as background process
 if [[ -x "$ADMIN_LOOP" ]]; then
-    "$ADMIN_LOOP" >> "$RELAY_LOG_DIR/admin-loop.log" 2>&1 & disown
+    setsid "$ADMIN_LOOP" >> "$RELAY_LOG_DIR/admin-loop.log" 2>&1 &
     echo $! > "$ADMIN_PID_FILE"
     log "Admin loop started (pid=$!, log=$RELAY_LOG_DIR/admin-loop.log)"
 else
