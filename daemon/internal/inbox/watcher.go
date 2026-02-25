@@ -2,11 +2,14 @@ package inbox
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/norm/relay-daemon/pkg/envelope"
@@ -60,30 +63,87 @@ func (w *Watcher) Start(ctx context.Context) error {
 		return err
 	}
 
+	reconcileTicker := time.NewTicker(30 * time.Second)
+	defer reconcileTicker.Stop()
+
+	const maxConsecutiveErrors = 10
+	const errorWindow = 30 * time.Second
+	var consecutiveErrors int
+	var windowStart time.Time
+
+	recordError := func(err error) error {
+		now := time.Now()
+		if windowStart.IsZero() || now.Sub(windowStart) > errorWindow {
+			windowStart = now
+			consecutiveErrors = 1
+		} else {
+			consecutiveErrors++
+		}
+		log.Printf("watcher fsnotify error (%d/%d in %s): %v", consecutiveErrors, maxConsecutiveErrors, errorWindow, err)
+		if consecutiveErrors >= maxConsecutiveErrors {
+			return fmt.Errorf("watcher circuit breaker tripped after %d consecutive fsnotify errors in %s: %w", consecutiveErrors, errorWindow, err)
+		}
+		return nil
+	}
+
+	resetErrors := func() {
+		consecutiveErrors = 0
+		windowStart = time.Time{}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			close(w.events)
 			return nil
-		case err := <-w.watcher.Errors:
-			if err != nil {
-				return err
+		case <-reconcileTicker.C:
+			if err := w.readExisting(); err != nil {
+				log.Printf("watcher reconciliation warning: %v", err)
+				continue
 			}
-		case event := <-w.watcher.Events:
+			resetErrors()
+		case err, ok := <-w.watcher.Errors:
+			if !ok {
+				if cbErr := recordError(errors.New("watcher error channel closed")); cbErr != nil {
+					close(w.events)
+					return cbErr
+				}
+				continue
+			}
+			if err != nil {
+				if cbErr := recordError(err); cbErr != nil {
+					close(w.events)
+					return cbErr
+				}
+			}
+		case event, ok := <-w.watcher.Events:
+			if !ok {
+				if cbErr := recordError(errors.New("watcher event channel closed")); cbErr != nil {
+					close(w.events)
+					return cbErr
+				}
+				continue
+			}
+			processedOK := true
 			if event.Op&fsnotify.Create != 0 {
 				if err := w.addWatchIfDir(event.Name); err != nil {
-					return err
+					processedOK = false
+					log.Printf("watcher add-watch warning for %s: %v", event.Name, err)
 				}
 			}
 			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
 				if err := w.readNew(event.Name); err != nil {
-					return err
+					processedOK = false
+					log.Printf("watcher read warning for %s: %v", event.Name, err)
 				}
 			}
 			if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 				w.mu.Lock()
 				delete(w.offsets, event.Name)
 				w.mu.Unlock()
+			}
+			if processedOK {
+				resetErrors()
 			}
 		}
 	}
@@ -195,7 +255,7 @@ func (w *Watcher) readNew(path string) error {
 
 	if sent {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
+			log.Printf("outbox remove warning %s: %v", path, err)
 		}
 	}
 
