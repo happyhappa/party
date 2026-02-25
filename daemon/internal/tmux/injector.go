@@ -88,9 +88,13 @@ func (i *Injector) Start(ctx context.Context) {
 		i.mu.Lock()
 		defer i.mu.Unlock()
 		for target, pane := range i.targets {
-			pq := newPaneQueue(target, pane)
-			i.queues[target] = pq
-			go pq.run(ctx, i)
+			if pq, ok := i.queues[target]; ok {
+				go pq.run(ctx, i)
+			} else {
+				pq := newPaneQueue(target, pane)
+				i.queues[target] = pq
+				go pq.run(ctx, i)
+			}
 		}
 	})
 }
