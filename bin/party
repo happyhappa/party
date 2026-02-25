@@ -266,21 +266,43 @@ log "Writing pane map to $PANE_MAP"
 printf '{"panes":{"oc":"%s","cc":"%s","cx":"%s"},"version":1,"registered_at":"%s"}\n' \
     "$OC_PANE" "$CC_PANE" "$CX_PANE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PANE_MAP"
 
-# Force-kill stale processes before starting new ones
+# Force-kill stale processes before starting new ones (two-phase)
 RELAY_PID_FILE="$RELAY_STATE_DIR/relay-daemon.pid"
 ADMIN_PID_FILE="$RELAY_STATE_DIR/admin-loop.pid"
 KILLED_STALE=false
-if [[ -f "$RELAY_PID_FILE" ]] && kill -0 $(cat "$RELAY_PID_FILE") 2>/dev/null; then
-    log "Killing stale relay daemon (pid=$(cat "$RELAY_PID_FILE"))"
-    kill $(cat "$RELAY_PID_FILE") 2>/dev/null || true
-    KILLED_STALE=true
-fi
-if [[ -f "$ADMIN_PID_FILE" ]] && kill -0 $(cat "$ADMIN_PID_FILE") 2>/dev/null; then
-    log "Killing stale admin loop (pid=$(cat "$ADMIN_PID_FILE"))"
-    kill $(cat "$ADMIN_PID_FILE") 2>/dev/null || true
-    rm -f "$ADMIN_PID_FILE"
-    KILLED_STALE=true
-fi
+
+# Phase 1: Kill known PIDs from pidfiles
+for pidfile in "$RELAY_PID_FILE" "$ADMIN_PID_FILE"; do
+    if [[ -f "$pidfile" ]]; then
+        pid=$(cat "$pidfile")
+        if kill -0 "$pid" 2>/dev/null; then
+            log "Killing stale process (pid=$pid from $pidfile)"
+            kill "$pid" 2>/dev/null || true
+            KILLED_STALE=true
+        fi
+        rm -f "$pidfile"
+    fi
+done
+
+# Phase 2: Sweep for orphaned processes whose environ contains our RELAY_STATE_DIR
+# This catches processes from previous launches whose PID files were overwritten
+for pid in $(pgrep -f relay-daemon 2>/dev/null || true); do
+    if [[ -f "/proc/$pid/environ" ]] && \
+       tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qF "RELAY_STATE_DIR=$RELAY_STATE_DIR"; then
+        log "Killing orphaned relay-daemon (pid=$pid)"
+        kill "$pid" 2>/dev/null || true
+        KILLED_STALE=true
+    fi
+done
+for pid in $(pgrep -f admin-loop.sh 2>/dev/null || true); do
+    if [[ -f "/proc/$pid/environ" ]] && \
+       tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qF "RELAY_STATE_DIR=$RELAY_STATE_DIR"; then
+        log "Killing orphaned admin-loop (pid=$pid)"
+        kill "$pid" 2>/dev/null || true
+        KILLED_STALE=true
+    fi
+done
+
 # Wait for flock to release after killing stale processes
 $KILLED_STALE && sleep 1
 
