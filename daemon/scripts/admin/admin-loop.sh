@@ -34,6 +34,35 @@ cleanup() {
 }
 trap cleanup EXIT SIGTERM SIGINT
 
+LOG_DIR="${RELAY_LOG_DIR:-$HOME/llm-share/relay/log}"
+
+# Check if relay-daemon is alive; restart if dead
+check_daemon() {
+    local pidfile="$STATE_DIR/relay-daemon.pid"
+    if [[ ! -f "$pidfile" ]]; then
+        log "WARNING: relay-daemon PID file missing"
+        return 1
+    fi
+    local pid
+    pid=$(cat "$pidfile")
+    if ! kill -0 "$pid" 2>/dev/null; then
+        log "WARNING: relay-daemon (pid=$pid) is dead"
+        return 1
+    fi
+    return 0
+}
+
+restart_daemon() {
+    log "Attempting relay-daemon restart..."
+    relay-daemon >> "$LOG_DIR/relay.log" 2>&1 & disown
+    sleep 1
+    if check_daemon; then
+        log "relay-daemon restarted successfully (pid=$(cat "$STATE_DIR/relay-daemon.pid"))"
+    else
+        log "ERROR: relay-daemon restart failed"
+    fi
+}
+
 log "Started (pid=$$, checkpoint=${CHECKPOINT_INTERVAL}s, health=${HEALTH_CHECK_INTERVAL}s)"
 
 # Initialize to now so first cycle waits a full interval
@@ -50,10 +79,13 @@ while true; do
         LAST_CHECKPOINT=$(date +%s)
     fi
 
-    # Health check
+    # Health check + daemon watchdog
     if (( NOW - LAST_HEALTH_CHECK >= HEALTH_CHECK_INTERVAL )); then
         log "Running health check"
         "$SCRIPT_DIR/admin-health-check.sh" 2>&1 || log "Health check failed (exit $?)"
+        if ! check_daemon; then
+            restart_daemon
+        fi
         LAST_HEALTH_CHECK=$(date +%s)
     fi
 
