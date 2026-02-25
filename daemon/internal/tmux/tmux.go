@@ -62,6 +62,8 @@ func (t *Tmux) SendToPane(pane, message string) error {
 	lock.Lock()
 	defer lock.Unlock()
 
+	t.WakePaneIfDetached(pane)
+
 	if _, err := t.run("send-keys", "-t", pane, "-l", message); err != nil {
 		return err
 	}
