@@ -60,7 +60,12 @@ case "$cmd" in
       exit 2
     fi
 
-    msg="$*"
+    # Support reading from stdin via "-" argument
+    if [[ "$1" == "-" ]]; then
+      msg="$(cat)"
+    else
+      msg="$*"
+    fi
     send_message "$to" "$msg" "chat"
     ;;
 

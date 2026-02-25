@@ -54,7 +54,7 @@ check_daemon() {
 
 restart_daemon() {
     log "Attempting relay-daemon restart..."
-    relay-daemon >> "$LOG_DIR/relay.log" 2>&1 & disown
+    setsid relay-daemon >> "$LOG_DIR/relay.log" 2>&1 &
     sleep 1
     if check_daemon; then
         log "relay-daemon restarted successfully (pid=$(cat "$STATE_DIR/relay-daemon.pid"))"
