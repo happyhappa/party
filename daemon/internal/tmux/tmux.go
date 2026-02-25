@@ -45,7 +45,7 @@ func (t *Tmux) SendToPane(pane, message string) error {
 		return err
 	}
 
-	if _, err := t.run("paste-buffer", "-b", "relay-msg", "-t", pane, "-d"); err != nil {
+	if _, err := t.run("paste-buffer", "-p", "-b", "relay-msg", "-t", pane, "-d"); err != nil {
 		return err
 	}
 
