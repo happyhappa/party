@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,6 +37,42 @@ func acquireLockfile(path string) (*os.File, error) {
 	return f, nil
 }
 
+type tombstone struct {
+	Timestamp     string `json:"timestamp"`
+	Reason        string `json:"reason"`
+	Detail        string `json:"detail"`
+	PID           int    `json:"pid"`
+	UptimeSeconds int64  `json:"uptime_seconds"`
+}
+
+type daemonError struct {
+	reason string
+	detail string
+}
+
+func (e daemonError) Error() string {
+	return e.detail
+}
+
+func writeTombstone(stateDir, reason, detail string, pid int, startedAt time.Time) error {
+	path := filepath.Join(stateDir, "last-exit.json")
+	tmp := path + ".tmp"
+	data, err := json.Marshal(tombstone{
+		Timestamp:     time.Now().UTC().Format(time.RFC3339),
+		Reason:        reason,
+		Detail:        detail,
+		PID:           pid,
+		UptimeSeconds: int64(time.Since(startedAt).Seconds()),
+	})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 func main() {
 	cfg, err := cfgpkg.Load()
 	if err != nil {
@@ -41,6 +81,43 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatalf("config: %v", err)
 	}
+
+	buildInfo := "unknown"
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		buildInfo = fmt.Sprintf("%s %s", bi.Main.Path, bi.Main.Version)
+	}
+	log.Printf(
+		"relay-daemon starting pid=%d ppid=%d state_dir=%s inbox_dir=%s pane_map_path=%s build=%s",
+		os.Getpid(),
+		os.Getppid(),
+		cfg.StateDir,
+		cfg.InboxDir,
+		cfg.PaneMapPath,
+		buildInfo,
+	)
+
+	startedAt := time.Now()
+	var exitMu sync.Mutex
+	exitReason := "error"
+	exitDetail := "unknown"
+	setExit := func(reason, detail string) {
+		exitMu.Lock()
+		defer exitMu.Unlock()
+		exitReason = reason
+		exitDetail = detail
+	}
+	getExit := func() (string, string) {
+		exitMu.Lock()
+		defer exitMu.Unlock()
+		return exitReason, exitDetail
+	}
+	defer func() {
+		reason, detail := getExit()
+		if err := writeTombstone(cfg.StateDir, reason, detail, os.Getpid(), startedAt); err != nil {
+			log.Printf("warning: failed to write tombstone: %v", err)
+		}
+		log.Printf("relay-daemon exiting reason=%s detail=%s", reason, detail)
+	}()
 
 	// Fix 2: Acquire exclusive lockfile to prevent duplicate daemons
 	lockPath := filepath.Join(cfg.StateDir, "relay-daemon.lock")
@@ -101,14 +178,36 @@ func main() {
 	defer cancel()
 
 	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	go func() {
-		<-sigs
+		sig := <-sigs
+		log.Printf("signal received: %s", sig)
+		setExit("signal", sig.String())
 		cancel()
 	}()
 
+	errCh := make(chan error, 5)
+	runProtected := func(name string, fn func() error) {
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					stack := debug.Stack()
+					detail := fmt.Sprintf("%s panic: %v", name, r)
+					log.Printf("%s\n%s", detail, stack)
+					if err := writeTombstone(cfg.StateDir, "panic", detail, os.Getpid(), startedAt); err != nil {
+						log.Printf("warning: failed to write panic tombstone: %v", err)
+					}
+					errCh <- daemonError{reason: "panic", detail: detail}
+				}
+			}()
+			if err := fn(); err != nil {
+				errCh <- daemonError{reason: "error", detail: fmt.Sprintf("%s: %v", name, err)}
+			}
+		}()
+	}
+
 	// Hot-reload panes.json when it changes on disk.
-	go func() {
+	runProtected("pane-map-reload", func() error {
 		var lastMod time.Time
 		if info, err := os.Stat(cfg.PaneMapPath); err == nil {
 			lastMod = info.ModTime()
@@ -120,7 +219,7 @@ func main() {
 		for {
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			case <-ticker.C:
 				info, err := os.Stat(cfg.PaneMapPath)
 				if err != nil {
@@ -140,23 +239,23 @@ func main() {
 				log.Printf("pane map reloaded: %v", targets)
 			}
 		}
-	}()
+	})
 
-	errCh := make(chan error, 2)
-
-	go func() {
-		if err := watcher.Start(ctx); err != nil {
-			errCh <- err
-		}
-	}()
-	go injector.Start(ctx)
-	go func() {
-		if err := super.Start(ctx); err != nil {
-			errCh <- err
-		}
-	}()
+	runProtected("watcher", func() error {
+		return watcher.Start(ctx)
+	})
+	runProtected("injector", func() error {
+		injector.Start(ctx)
+		return nil
+	})
+	runProtected("supervisor", func() error {
+		return super.Start(ctx)
+	})
 	if paneTailer != nil {
-		go paneTailer.Start(ctx)
+		runProtected("pane-tailer", func() error {
+			paneTailer.Start(ctx)
+			return nil
+		})
 	}
 
 	go func() {
@@ -171,12 +270,28 @@ func main() {
 		select {
 		case err := <-errCh:
 			if err != nil {
-				log.Printf("relay error: %v", err)
+				reason := "error"
+				detail := err.Error()
+				var dErr daemonError
+				if errors.As(err, &dErr) {
+					reason = dErr.reason
+					detail = dErr.detail
+				}
+				setExit(reason, detail)
+				log.Printf("relay error: %v", detail)
 				cancel()
 				return
 			}
 		case env, ok := <-watcher.Events():
 			if !ok {
+				if ctx.Err() != nil {
+					reason, detail := getExit()
+					if reason == "error" && detail == "unknown" {
+						setExit("signal", "context canceled")
+					}
+				} else {
+					setExit("error", "watcher events channel closed unexpectedly")
+				}
 				return
 			}
 			_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeReceived, env.From, env.To).WithMsgID(env.MsgID))
