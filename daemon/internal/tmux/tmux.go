@@ -17,8 +17,6 @@ func vimModeEnabled() bool {
 	return strings.ToLower(os.Getenv("RELAY_VIM_MODE")) == "true"
 }
 
-var paneNudgeLocks sync.Map
-
 // Tmux provides helpers for interacting with tmux.
 type Tmux struct{}
 
@@ -26,30 +24,11 @@ func New() *Tmux {
 	return &Tmux{}
 }
 
-func getNudgeLock(target string) *sync.Mutex {
-	actual, _ := paneNudgeLocks.LoadOrStore(target, &sync.Mutex{})
+var paneSendLocks sync.Map
+
+func getSendLock(target string) *sync.Mutex {
+	actual, _ := paneSendLocks.LoadOrStore(target, &sync.Mutex{})
 	return actual.(*sync.Mutex)
-}
-
-// IsSessionAttached returns true if the session has any clients attached.
-func (t *Tmux) IsSessionAttached(target string) bool {
-	attached, err := t.run("display-message", "-t", target, "-p", "#{session_attached}")
-	return err == nil && attached == "1"
-}
-
-// WakePane triggers a SIGWINCH in a pane by resizing it slightly then restoring.
-func (t *Tmux) WakePane(target string) {
-	_, _ = t.run("resize-pane", "-t", target, "-y", "-1")
-	time.Sleep(50 * time.Millisecond)
-	_, _ = t.run("resize-pane", "-t", target, "-y", "+1")
-}
-
-// WakePaneIfDetached triggers a SIGWINCH only if the session is detached.
-func (t *Tmux) WakePaneIfDetached(target string) {
-	if t.IsSessionAttached(target) {
-		return
-	}
-	t.WakePane(target)
 }
 
 // SendToPane sends a message to a specific pane reliably.
@@ -58,17 +37,19 @@ func (t *Tmux) SendToPane(pane, message string) error {
 		return errors.New("tmux: empty pane target")
 	}
 
-	lock := getNudgeLock(pane)
+	lock := getSendLock(pane)
 	lock.Lock()
 	defer lock.Unlock()
 
-	t.WakePaneIfDetached(pane)
-
-	if _, err := t.run("send-keys", "-t", pane, "-l", message); err != nil {
+	if err := t.loadBuffer("relay-msg", message); err != nil {
 		return err
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	if _, err := t.run("paste-buffer", "-b", "relay-msg", "-t", pane, "-d"); err != nil {
+		return err
+	}
+
+	time.Sleep(1 * time.Second)
 
 	// Only send Escape if vim mode is enabled (to exit INSERT mode)
 	if vimModeEnabled() {
@@ -85,7 +66,6 @@ func (t *Tmux) SendToPane(pane, message string) error {
 			lastErr = err
 			continue
 		}
-		t.WakePaneIfDetached(pane)
 		return nil
 	}
 
@@ -128,4 +108,16 @@ func (t *Tmux) run(args ...string) (string, error) {
 		return output, fmt.Errorf("tmux %v: %w", args, err)
 	}
 	return output, nil
+}
+
+// loadBuffer writes content to a tmux buffer via stdin.
+func (t *Tmux) loadBuffer(bufferName, content string) error {
+	cmd := exec.Command("tmux", "load-buffer", "-b", bufferName, "-")
+	cmd.Stdin = strings.NewReader(content)
+	out, err := cmd.CombinedOutput()
+	output := strings.TrimSpace(string(out))
+	if err != nil {
+		return fmt.Errorf("tmux [load-buffer -b %s -]: %w (%s)", bufferName, err, output)
+	}
+	return nil
 }
