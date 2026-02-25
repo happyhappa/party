@@ -1,8 +1,9 @@
 # RFC-002: Context Capture and Recovery - Deployment Status
 
 **Status:** ✅ OPERATIONAL (Beta)
-**Date:** 2026-02-04 (last updated 2026-02-18)
-**Commit:** 1547dfd (initial), 8953b3c (current)
+**Date:** 2026-02-04 (last updated 2026-02-25)
+**Commit:** 1547dfd (initial), 77ea8d3 (current)
+**See also:** [RFC-004](/mnt/llm-share/rfcs/RFC-004-system-architecture-current-state.md) (System Architecture), [RFC-005](/mnt/llm-share/rfcs/RFC-005-design-principles-and-service-architecture.md) (Design Principles)
 
 ---
 
@@ -27,9 +28,10 @@
 - **Manual commands:** BOTH legacy and new coexist
 - **Storage:** Beads SQLite + JSONL + Git
 - **Recovery:** 3-tier (checkpoint → tail → autogen)
-- **Admin pane:** Dedicated Claude Code pane for orchestration (Addendum A)
-- **Relay daemon:** Dumb router + timers, injects skills to admin pane
-- **Prestige recycling:** Admin context refreshed after N cycles or max uptime
+- **Admin loop:** Bash scheduler replacing LLM admin pane (RFC-004 §5, RFC-005 §2.4)
+- **Relay daemon:** Pure message router (Go) — inbox watcher, tmux injector, checkpoint interception
+- **Inline LLM calls:** `claude --print` and `codex review/exec` for stateless tasks (subscription, no API cost)
+- **Layout:** 3-pane (OC + CC + CX) — reviewer is a service, not a pane (RFC-005 §2.2)
 
 ---
 
@@ -77,9 +79,10 @@ If critical issues found:
 - ⚠️ beads.role config warning (cosmetic)
 - ⚠️ PATH dependency in hooks (set manually)
 - ⚠️ Haiku integration incomplete (autogen not active)
-- ⚠️ Summary watcher not deployed (Phase 2.5 deferred)
-- ⚠️ CX Enter timing — relay injection to Codex panes sometimes needs manual Enter despite 500ms delay
-- ⚠️ CC relay piping — `cat file | relay send oc -` delivers "-" instead of stdin content
+- ~~⚠️ Summary watcher not deployed~~ → DEAD CODE, being removed (summarywatcher package unused)
+- ~~⚠️ CX Enter timing~~ → ✅ RESOLVED: `paste-buffer -p` adds bracketed paste boundaries (77ea8d3)
+- ⚠️ CC relay piping — `cat file | relay send oc -` delivers "-" instead of stdin content (sprint fix in progress)
+- ~~⚠️ Large payload injection~~ → ✅ RESOLVED: load-buffer + paste-buffer replaces send-keys for payloads (ee57e79, 77ea8d3)
 
 ---
 
@@ -95,15 +98,16 @@ If critical issues found:
 
 ### Medium Term (2-4 Weeks)
 - [ ] Complete Haiku integration
-- [ ] Deploy summary watcher
+- [x] ~~Deploy summary watcher~~ → removed as dead code, replaced by inline brief service
 - [ ] Deprecate legacy commands
 - [ ] Full E2E test suite
 
-### Addendum A: Admin Pane Architecture
+### Addendum A: Admin Architecture Evolution
 - [x] Phase 1: Admin pane MVP (config, timer, recycler, skills, party-v2)
 - [x] Phase 2: Polish (staleness checks, structured logging, CX auto-recovery, integration tests)
 - [x] Phase 3: Legacy removal (delete admin package, sessionmap, autogen; admin pane is sole path)
-- [ ] E2E test: Full 4-pane startup with live daemon
+- [ ] Phase 4: Admin pane → admin-loop bash refactor (RFC-004 §5, plan exists)
+- [ ] E2E test: Full 3-pane startup with admin-loop + relay daemon
 
 ### Recent Fixes (2026-02-17/18)
 - [x] CX routing bug — zombie daemon killed, stale session-map deleted, 5 defensive fixes deployed
@@ -113,13 +117,19 @@ If critical issues found:
 - [x] PATH in systemd env — daemon can now find bd binary
 - [x] Adaptive health-check frequency — 5min active, 15min after 3 idle cycles
 
-### Future: Role Restructuring
+### Recent Fixes (2026-02-25)
+- [x] Large payload injection — load-buffer + paste-buffer replaces send-keys (ee57e79)
+- [x] Bracketed paste fix — paste-buffer -p flag for terminal app compatibility (77ea8d3)
+- [x] WakePane removal — caused pane shrink accumulation on blocked retries
+- [x] Per-pane mutex — sync.Map + getSendLock prevents buffer name race on concurrent sends
+
+### Future: Role Restructuring (updated per RFC-004/005)
 - [ ] OC: strict no-code orchestrator, uses background subagents for research to preserve context
 - [ ] CX1: primary coder (Codex), owns its worktree
-- [ ] CX2: dedicated code reviewer/PR pane (Codex), read access to cx1 and cc worktrees
-- [ ] CC: repurposed as infra/testing/research/db — everything CX sandbox prevents. Uses background subagents for test runs to preserve context
-- [ ] Admin: downgrade from Sonnet to Haiku — mechanical skill execution only
-- [ ] Relay: add cx1/cx2 to panes.json, idle detection unchanged (Codex has no JSONL)
+- [x] ~~CX2: dedicated code reviewer pane~~ → eliminated, review is now `codex review` inline service
+- [ ] CC: repurposed as infra/testing/research/db — everything CX sandbox prevents
+- [x] ~~Admin: downgrade from Sonnet to Haiku~~ → eliminated, admin is now bash loop (zero LLM cost)
+- [ ] Inline services: `codex review`, `claude --print` for reviews/briefs/analysis (subscription-based)
 
 ### Long Term
 - [ ] Performance optimization
