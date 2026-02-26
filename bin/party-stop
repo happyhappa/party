@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+#
+# party-stop - Clean shutdown of a party orchestration session
+#
+# Captures session briefs from active agents, kills daemons,
+# tears down tmux session, and cleans state files.
+#
+# Usage: party-stop [session-name]
+#   If no session name given, auto-detects from $RELAY_TMUX_SESSION or TMUX env.
+#
+# Safe to run multiple times (idempotent).
+#
+
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m'
+
+log()  { echo -e "${GREEN}[party-stop]${NC} $1"; }
+warn() { echo -e "${YELLOW}[party-stop]${NC} $1"; }
+err()  { echo -e "${RED}[party-stop]${NC} $1" >&2; }
+
+# --- Resolve session name ---
+SESSION="${1:-${RELAY_TMUX_SESSION:-}}"
+
+if [[ -z "$SESSION" ]]; then
+    # Auto-detect from TMUX env (if running inside the tmux session)
+    if [[ -n "${TMUX:-}" ]]; then
+        SESSION=$(tmux display-message -p '#{session_name}' 2>/dev/null || true)
+    fi
+fi
+
+if [[ -z "$SESSION" ]]; then
+    err "Usage: party-stop [session-name]"
+    err "Running party sessions:"
+    tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^party-' || err '  (none)'
+    exit 1
+fi
+
+if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    warn "Session '$SESSION' does not exist (already stopped?)"
+    # Still try to clean up state below
+fi
+
+# --- Resolve state directory ---
+STATE_DIR="${RELAY_STATE_DIR:-}"
+if [[ -z "$STATE_DIR" ]]; then
+    STATE_DIR=$(tmux show-environment -t "$SESSION" RELAY_STATE_DIR 2>/dev/null | cut -d= -f2- || true)
+fi
+
+if [[ -z "$STATE_DIR" ]]; then
+    err "Cannot determine RELAY_STATE_DIR for session '$SESSION'"
+    err "Set RELAY_STATE_DIR or pass the session name as argument"
+    exit 1
+fi
+
+LOG_DIR="${RELAY_LOG_DIR:-$(dirname "$STATE_DIR")/log}"
+
+log "Stopping party session '$SESSION' (state: $STATE_DIR)"
+
+# --- Step 1: Capture session briefs from active agent panes ---
+PANES_FILE="$STATE_DIR/panes.json"
+if [[ -f "$PANES_FILE" ]]; then
+    log "Capturing session briefs from active agents..."
+    for ROLE in oc cc cx; do
+        PANE_ID=$(jq -r ".panes.$ROLE // empty" "$PANES_FILE" 2>/dev/null || true)
+        [[ -z "$PANE_ID" ]] && continue
+
+        # Check if pane exists and has an agent process
+        # CX check must come first — CX runs under node (same as Claude), so check role before command
+        CMD=$(tmux display-message -t "$PANE_ID" -p '#{pane_current_command}' 2>/dev/null || echo "")
+        if [[ "$ROLE" == "cx" ]] && echo "$CMD" | grep -qE '^(codex|node)$'; then
+            log "  Sending /compact to cx ($PANE_ID)..."
+            tmux send-keys -t "$PANE_ID" "/compact" Enter 2>/dev/null || true
+        elif echo "$CMD" | grep -qE '^(claude|node)$'; then
+            log "  Sending /checkpoint to $ROLE ($PANE_ID)..."
+            tmux send-keys -t "$PANE_ID" "/checkpoint" Enter 2>/dev/null || true
+        else
+            warn "  $ROLE: no agent process detected (cmd=$CMD), skipping brief"
+        fi
+    done
+
+    # Give agents a few seconds to process checkpoint
+    log "  Waiting 5s for checkpoint processing..."
+    sleep 5
+else
+    warn "No panes.json found — skipping brief capture"
+fi
+
+# --- Step 2: Kill relay daemon ---
+kill_by_pidfile() {
+    local name="$1" pidfile="$2"
+    if [[ -f "$pidfile" ]]; then
+        local pid
+        pid=$(cat "$pidfile" 2>/dev/null || true)
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            log "Killing $name (pid=$pid)"
+            kill "$pid" 2>/dev/null || true
+            # Wait briefly for clean exit
+            local i=0
+            while (( i < 10 )) && kill -0 "$pid" 2>/dev/null; do
+                sleep 0.2
+                (( i++ )) || true
+            done
+            # Force kill if still alive
+            if kill -0 "$pid" 2>/dev/null; then
+                warn "$name did not exit cleanly, sending SIGKILL"
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        else
+            warn "$name pidfile exists but process not running (stale pid=$pid)"
+        fi
+        rm -f "$pidfile"
+    else
+        warn "No pidfile for $name"
+    fi
+}
+
+kill_by_pidfile "relay-daemon" "$STATE_DIR/relay-daemon.pid"
+
+# --- Step 3: Kill admin-loop ---
+kill_by_pidfile "admin-loop" "$STATE_DIR/admin-loop.pid"
+
+# --- Step 4: Sweep for orphaned processes (belt + suspenders) ---
+for pattern in relay-daemon admin-loop.sh; do
+    for pid in $(pgrep -f "$pattern" 2>/dev/null || true); do
+        if [[ -f "/proc/$pid/environ" ]] && \
+           tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qF "RELAY_STATE_DIR=$STATE_DIR"; then
+            warn "Killing orphaned $pattern (pid=$pid)"
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+done
+
+# --- Step 5: Kill tmux session ---
+if tmux has-session -t "$SESSION" 2>/dev/null; then
+    log "Killing tmux session '$SESSION'"
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+else
+    warn "tmux session '$SESSION' already gone"
+fi
+
+# --- Step 6: Clean state files ---
+log "Cleaning state files..."
+CLEANED=0
+for f in panes.json admin-loop.pid relay-daemon.pid admin-loop.heartbeat \
+         health-hash-oc.txt health-hash-cc.txt health-hash-cx.txt \
+         last-checkpoint-dispatch project-dirs.json; do
+    if [[ -f "$STATE_DIR/$f" ]]; then
+        rm -f "$STATE_DIR/$f"
+        (( CLEANED++ )) || true
+    fi
+done
+# Clean lock files
+for f in "$STATE_DIR"/pre-compact-*.lock; do
+    [[ -f "$f" ]] && rm -f "$f" && (( CLEANED++ )) || true
+done
+log "  Removed $CLEANED state files"
+
+# --- Done ---
+log "Session '$SESSION' stopped cleanly."
