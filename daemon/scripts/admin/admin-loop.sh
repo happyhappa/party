@@ -87,5 +87,8 @@ while true; do
         LAST_HEALTH_CHECK=$(date +%s)
     fi
 
+    # Write deadman heartbeat
+    date +%s > "$STATE_DIR/admin-loop.heartbeat"
+
     sleep "$SLEEP_INTERVAL"
 done
