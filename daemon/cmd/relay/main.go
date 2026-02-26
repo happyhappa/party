@@ -192,6 +192,8 @@ func buildBDCommand(ctx context.Context, args ...string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("bd not found: %w", err)
 	}
 	fullArgs := append([]string{}, args...)
+	// Always use --no-daemon to avoid bd's 5s daemon startup probe timeout
+	fullArgs = append([]string{"--no-daemon"}, fullArgs...)
 	if beadsDir := strings.TrimSpace(os.Getenv("BEADS_DIR")); beadsDir != "" {
 		dbPath := filepath.Join(beadsDir, "beads.db")
 		if _, err := os.Stat(dbPath); err == nil {
@@ -221,11 +223,27 @@ func (m *taskBeadManager) appendToBead(beadID, message string) error {
 }
 
 func (m *taskBeadManager) beadBody(beadID string) (string, error) {
-	out, err := m.bdCombinedOutput(15*time.Second, "show", beadID, "--body")
+	out, err := m.bdCombinedOutput(15*time.Second, "show", beadID, "--json")
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(out), nil
+	// bd show --json returns an array
+	var beads []map[string]any
+	if err := json.Unmarshal([]byte(out), &beads); err != nil {
+		// Try single object fallback
+		var bead map[string]any
+		if err2 := json.Unmarshal([]byte(out), &bead); err2 != nil {
+			return "", fmt.Errorf("parse bd show json: %w", err)
+		}
+		beads = []map[string]any{bead}
+	}
+	if len(beads) == 0 {
+		return "", nil
+	}
+	if desc, ok := beads[0]["description"].(string); ok {
+		return desc, nil
+	}
+	return "", nil
 }
 
 func (m *taskBeadManager) updateBeadStatus(beadID, status string) error {
@@ -238,21 +256,33 @@ func (m *taskBeadManager) createTaskBead(target, sender, message string, now tim
 	args := []string{
 		"create",
 		"--type", "task",
-		"--status", "open",
 		"--title", title,
 		"--label", "role:" + target,
 		"--label", "from:" + sender,
 		"--label", "repo:" + m.repo,
 		"--label", "source:relay_task",
-		"--body", message,
+		"--description", message,
 	}
 	out, err := m.bdCombinedOutput(20*time.Second, args...)
 	if err != nil {
 		return "", err
 	}
+	// Parse bead ID from output like "✓ Created issue: party-awcft"
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "Created issue:") || strings.Contains(line, "Created") {
+			parts := strings.Fields(line)
+			for i, p := range parts {
+				if p == "issue:" && i+1 < len(parts) {
+					return parts[i+1], nil
+				}
+			}
+		}
+	}
+	// Fallback: first non-empty token
 	fields := strings.Fields(out)
 	if len(fields) == 0 {
-		return "", fmt.Errorf("bd create returned empty bead id")
+		return "", fmt.Errorf("bd create returned empty bead id: %s", out)
 	}
 	return fields[0], nil
 }
@@ -316,7 +346,7 @@ func (m *taskBeadManager) classifyAsync(req *classifierRequest) (string, error) 
 	ctx, cancel := context.WithTimeout(context.Background(), classifierPromptTimeout)
 	defer cancel()
 	prompt := "Classify this response to a task assignment. Default to in_progress if ambiguous. Reply with exactly one word: in_progress, blocked, or completed."
-	cmd := exec.CommandContext(ctx, "codex", "-q", "-a", "full-auto", prompt)
+	cmd := exec.CommandContext(ctx, "codex", "exec", "--full-auto", prompt)
 	cmd.Stdin = strings.NewReader(req.Context)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -563,7 +593,9 @@ func main() {
 	logger := logpkg.NewEventLog(cfg.LogDir)
 	mux := tmuxpkg.New()
 	repo := "unknown"
-	if cwd, err := os.Getwd(); err == nil {
+	if gitRoot, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
+		repo = filepath.Base(strings.TrimSpace(string(gitRoot)))
+	} else if cwd, err := os.Getwd(); err == nil {
 		repo = filepath.Base(cwd)
 	}
 	taskBeads := newTaskBeadManager(cfg.StateDir, repo, logger)
