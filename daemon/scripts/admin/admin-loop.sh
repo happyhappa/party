@@ -65,6 +65,10 @@ restart_daemon() {
 
 log "Started (pid=$$, checkpoint=${CHECKPOINT_INTERVAL}s, health=${HEALTH_CHECK_INTERVAL}s)"
 
+# Refresh pane registration once at startup.
+log "Registering panes at startup"
+"$SCRIPT_DIR/admin-register-panes.sh" 2>&1 || log "Pane registration failed at startup (exit $?)"
+
 # Initialize to now so first cycle waits a full interval
 LAST_CHECKPOINT=$(date +%s)
 LAST_HEALTH_CHECK=$(date +%s)
@@ -88,6 +92,9 @@ while true; do
         fi
         LAST_HEALTH_CHECK=$(date +%s)
     fi
+
+    # Write deadman heartbeat
+    date +%s > "$STATE_DIR/admin-loop.heartbeat"
 
     sleep "$SLEEP_INTERVAL"
 done

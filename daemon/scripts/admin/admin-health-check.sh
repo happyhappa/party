@@ -26,6 +26,30 @@ fi
 PANES_JSON=$(cat "$PANES_FILE")
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+refresh_panes_if_stale() {
+    local session live_panes mismatch
+    session="${RELAY_TMUX_SESSION:-${TMUX_SESSION:-$(tmux display-message -p '#{session_name}' 2>/dev/null || echo 'party')}}"
+    live_panes=$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null || true)
+    [[ -z "$live_panes" ]] && return
+
+    mismatch=false
+    for role in oc cc cx; do
+        local pane_id
+        pane_id=$(echo "$PANES_JSON" | jq -r ".panes.${role} // empty")
+        [[ -z "$pane_id" ]] && continue
+        if ! echo "$live_panes" | grep -qxF "$pane_id"; then
+            mismatch=true
+            break
+        fi
+    done
+
+    if [[ "$mismatch" == "true" ]]; then
+        echo "Pane map mismatch detected; refreshing panes.json"
+        "$SCRIPT_DIR/admin-register-panes.sh" 2>&1 || echo "WARN: pane refresh failed"
+        PANES_JSON=$(cat "$PANES_FILE")
+    fi
+}
+
 log_anomaly() {
     local role="$1" anomaly="$2" cmd="$3" detail="$4"
     echo "{\"timestamp\":\"$TIMESTAMP\",\"type\":\"health-anomaly\",\"role\":\"$role\",\"anomaly\":\"$anomaly\",\"cmd\":\"$cmd\",\"detail\":\"$detail\"}" >> "$LOG_FILE"
@@ -34,34 +58,21 @@ log_anomaly() {
     fi
 }
 
-# Idle detection with grace period (shared logic with checkpoint-cycle)
-LAST_DISPATCH_FILE="$STATE_DIR/last-checkpoint-dispatch"
-GRACE_PERIOD=300  # 5 minutes — ignore JSONL writes caused by checkpoint response (agent processing can take 2-3min)
-
-is_agent_idle() {
-    local role="$1"
-    local project_dir
-    project_dir=$(jq -r ".${role} // empty" "$STATE_DIR/project-dirs.json" 2>/dev/null)
-    [[ -z "$project_dir" ]] && return 1  # can't determine, assume active
-
-    local latest_jsonl
-    latest_jsonl=$(ls -t "$project_dir"/*.jsonl 2>/dev/null | head -1)
-    [[ -z "$latest_jsonl" ]] && return 1
-
-    local mtime now last_dispatch cutoff
-    mtime=$(stat -c %Y "$latest_jsonl" 2>/dev/null || echo 0)
-    now=$(date +%s)
-    last_dispatch=$(cat "$LAST_DISPATCH_FILE" 2>/dev/null || echo 0)
-    cutoff=$(( last_dispatch + GRACE_PERIOD ))
-
-    # Activity within grace period of last dispatch = checkpoint response, still idle
-    if (( mtime <= cutoff )); then
-        return 0  # idle
+# Deadman heartbeat check — verify admin-loop is progressing
+HEARTBEAT_FILE="$STATE_DIR/admin-loop.heartbeat"
+if [[ -f "$HEARTBEAT_FILE" ]]; then
+    HEARTBEAT_EPOCH=$(cat "$HEARTBEAT_FILE" 2>/dev/null | tr -d '[:space:]')
+    if [[ "$HEARTBEAT_EPOCH" =~ ^[0-9]+$ ]]; then
+        HEARTBEAT_AGE=$(( $(date +%s) - HEARTBEAT_EPOCH ))
+        if (( HEARTBEAT_AGE > 300 )); then
+            log_anomaly "admin" "heartbeat_stale" "admin-loop" "heartbeat ${HEARTBEAT_AGE}s old (>300s critical)"
+        elif (( HEARTBEAT_AGE > 120 )); then
+            echo "[admin-health] WARNING: admin-loop heartbeat is ${HEARTBEAT_AGE}s stale (>120s)" >&2
+        fi
     fi
+fi
 
-    # Activity after grace period = genuinely active
-    return 1  # active
-}
+refresh_panes_if_stale
 
 declare -A STATUS
 

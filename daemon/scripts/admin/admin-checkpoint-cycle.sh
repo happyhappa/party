@@ -15,6 +15,11 @@ STATE_DIR="${RELAY_STATE_DIR:?RELAY_STATE_DIR not set — must be exported by bi
 LOG_FILE="$STATE_DIR/checkpoints.log"
 PANES_FILE="$STATE_DIR/panes.json"
 CHK_ID_FILE="$STATE_DIR/cx-chk-id"
+PROJECT_DIRS_FILE="$STATE_DIR/project-dirs.json"
+LAST_DISPATCH_FILE="$STATE_DIR/last-checkpoint-dispatch"
+INBOX_DIR="${RELAY_INBOX_DIR:?RELAY_INBOX_DIR not set — must be exported by bin/party}"
+GRACE_PERIOD=300
+BACKSTOP_INTERVAL="${RELAY_IDLE_BACKSTOP_INTERVAL:-7200}"
 
 # Guard: skip if checkpoint dispatched within last 8 minutes
 LAST_DISPATCH=$(grep '"type":"checkpoint-cycle"' "$LOG_FILE" 2>/dev/null | tail -1 | jq -r '.timestamp // empty' 2>/dev/null || true)
@@ -38,40 +43,100 @@ PANES_JSON=$(cat "$PANES_FILE")
 OC_PANE=$(echo "$PANES_JSON" | jq -r '.panes.oc // empty')
 CC_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cc // empty')
 
-# Idle detection with grace period (mirrors original Go idle.go logic)
-LAST_DISPATCH_FILE="$STATE_DIR/last-checkpoint-dispatch"
-GRACE_PERIOD=300   # 5 minutes — ignore JSONL writes caused by checkpoint response (agent processing can take 2-3min)
-BACKSTOP_INTERVAL=7200  # 2 hours — force checkpoint even when idle
+last_dispatch_epoch() {
+    cat "$LAST_DISPATCH_FILE" 2>/dev/null || echo 0
+}
 
-is_agent_idle() {
+project_dir_for_role() {
     local role="$1"
-    local project_dir
-    project_dir=$(jq -r ".${role} // empty" "$STATE_DIR/project-dirs.json" 2>/dev/null)
-    [[ -z "$project_dir" ]] && return 1  # can't determine, assume active
+    jq -r ".${role} // empty" "$PROJECT_DIRS_FILE" 2>/dev/null
+}
 
-    local latest_jsonl
+has_jsonl_activity() {
+    local role="$1" cutoff="$2"
+    local project_dir latest_jsonl mtime
+
+    project_dir=$(project_dir_for_role "$role")
+    [[ -z "$project_dir" ]] && return 1
+
     latest_jsonl=$(ls -t "$project_dir"/*.jsonl 2>/dev/null | head -1)
     [[ -z "$latest_jsonl" ]] && return 1
 
-    local mtime now last_dispatch cutoff
     mtime=$(stat -c %Y "$latest_jsonl" 2>/dev/null || echo 0)
-    now=$(date +%s)
-    last_dispatch=$(cat "$LAST_DISPATCH_FILE" 2>/dev/null || echo 0)
-    cutoff=$(( last_dispatch + GRACE_PERIOD ))
+    (( mtime > cutoff ))
+}
 
-    # Activity within grace period of last dispatch = checkpoint response, still idle
-    if (( mtime <= cutoff )); then
-        return 0  # idle
+worktree_dir_for_role() {
+    local role="$1"
+    jq -r ".${role}_worktree // .${role} // empty" "$PROJECT_DIRS_FILE" 2>/dev/null
+}
+
+has_source_activity() {
+    local role="$1" cutoff="$2"
+    local worktree_dir recent
+
+    worktree_dir=$(worktree_dir_for_role "$role")
+    [[ -z "$worktree_dir" ]] && return 1
+
+    recent=$(find "$worktree_dir" -maxdepth 3 -type f \( \
+        -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o \
+        -name '*.go' -o -name '*.py' -o -name '*.rs' -o -name '*.java' -o \
+        -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o \
+        -name '*.hpp' -o -name '*.rb' -o -name '*.php' -o -name '*.swift' -o \
+        -name '*.kt' -o -name '*.m' -o -name '*.mm' -o -name '*.cs' \
+    \) -printf '%T@\n' 2>/dev/null | awk -v cutoff="$cutoff" '$1 > cutoff {print; exit}')
+
+    [[ -n "$recent" ]]
+}
+
+has_outbox_activity() {
+    local role="$1" cutoff="$2"
+    local outbox_dir mtime
+
+    outbox_dir="$INBOX_DIR/$role"
+    [[ -d "$outbox_dir" ]] || return 1
+
+    mtime=$(stat -c %Y "$outbox_dir" 2>/dev/null || echo 0)
+    (( mtime > cutoff ))
+}
+
+is_oc_idle() {
+    local cutoff="$1"
+    if has_jsonl_activity "oc" "$cutoff"; then
+        return 1
+    fi
+    return 0
+}
+
+is_source_or_outbox_idle() {
+    local role="$1" cutoff="$2"
+    local has_signal=false
+    local project_dir outbox_dir
+
+    project_dir=$(project_dir_for_role "$role")
+    if [[ -n "$project_dir" ]]; then
+        has_signal=true
     fi
 
-    # Activity after grace period = genuinely active
-    return 1  # active
+    outbox_dir="$INBOX_DIR/$role"
+    if [[ -d "$outbox_dir" ]]; then
+        has_signal=true
+    fi
+
+    if [[ "$has_signal" != "true" ]]; then
+        return 1
+    fi
+
+    if has_source_activity "$role" "$cutoff" || has_outbox_activity "$role" "$cutoff"; then
+        return 1
+    fi
+    return 0
 }
 
 should_backstop() {
-    local last_dispatch now age
-    last_dispatch=$(cat "$LAST_DISPATCH_FILE" 2>/dev/null || echo 0)
+    local now age last_dispatch
     now=$(date +%s)
+    last_dispatch=$(last_dispatch_epoch)
     age=$(( now - last_dispatch ))
     (( age > BACKSTOP_INTERVAL ))
 }
@@ -85,16 +150,19 @@ printf '%s\n' "$CHK_ID" > "$CHK_ID_FILE"
 # Track which panes were dispatched to
 DISPATCHED=()
 
-# Backstop: force checkpoint if >2h since last dispatch
+# Idle/backstop gating
+LAST_DISPATCH_EPOCH=$(last_dispatch_epoch)
+CUTOFF_EPOCH=$(( LAST_DISPATCH_EPOCH + GRACE_PERIOD ))
+
 FORCE_DISPATCH=false
 if should_backstop; then
     FORCE_DISPATCH=true
-    echo "BACKSTOP: >2h since last dispatch, forcing checkpoint"
+    echo "BACKSTOP: >${BACKSTOP_INTERVAL}s since last dispatch, forcing checkpoint"
 fi
 
 # Dispatch to OC
 if [[ -n "$OC_PANE" ]]; then
-    if [[ "$FORCE_DISPATCH" != "true" ]] && is_agent_idle "oc"; then
+    if [[ "$FORCE_DISPATCH" != "true" ]] && is_oc_idle "$CUTOFF_EPOCH"; then
         echo "SKIP: OC idle, skipping checkpoint"
     else
         tmux-inject "$OC_PANE" "/checkpoint --respond $CHK_ID" && DISPATCHED+=("oc") || echo "WARN: OC inject failed"
@@ -103,37 +171,20 @@ fi
 
 # Dispatch to CC
 if [[ -n "$CC_PANE" ]]; then
-    if [[ "$FORCE_DISPATCH" != "true" ]] && is_agent_idle "cc"; then
+    if [[ "$FORCE_DISPATCH" != "true" ]] && is_source_or_outbox_idle "cc" "$CUTOFF_EPOCH"; then
         echo "SKIP: CC idle, skipping checkpoint"
     else
         tmux-inject "$CC_PANE" "/checkpoint --respond $CHK_ID" && DISPATCHED+=("cc") || echo "WARN: CC inject failed"
     fi
 fi
 
-is_cx_idle() {
-    local cx_dir
-    cx_dir=$(jq -r '.cx // empty' "$STATE_DIR/project-dirs.json" 2>/dev/null)
-    [[ -z "$cx_dir" ]] && return 1  # can't determine, assume active
-    local last_dispatch
-    last_dispatch=$(cat "$LAST_DISPATCH_FILE" 2>/dev/null || echo 0)
-    # Check if any source files changed since last dispatch + grace period
-    local cutoff_time
-    cutoff_time=$(( last_dispatch + GRACE_PERIOD ))
-    local recent
-    recent=$(find "$cx_dir" -maxdepth 3 -newer "$LAST_DISPATCH_FILE" -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.go' -o -name '*.py' -o -name '*.rs' \) 2>/dev/null | head -1)
-    if [[ -z "$recent" ]]; then
-        return 0  # idle — no source files changed
-    fi
-    return 1  # active
-}
-
-# Dispatch to CX
+# Dispatch to CX (uses dedicated script, no chk_id arg)
 CX_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cx // empty')
 if [[ -n "$CX_PANE" ]]; then
-    if [[ "$FORCE_DISPATCH" != "true" ]] && is_cx_idle; then
+    if [[ "$FORCE_DISPATCH" != "true" ]] && is_source_or_outbox_idle "cx" "$CUTOFF_EPOCH"; then
         echo "SKIP: CX idle, skipping checkpoint"
     else
-        cx-checkpoint-inject "$CHK_ID" && DISPATCHED+=("cx") || echo "WARN: CX inject failed"
+        cx-checkpoint-inject && DISPATCHED+=("cx") || echo "WARN: CX inject failed"
     fi
 fi
 
@@ -141,7 +192,7 @@ fi
 DISPATCHED_JSON=$(printf '%s\n' "${DISPATCHED[@]}" | jq -R . | jq -s .)
 echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"checkpoint-cycle\",\"cycle_id\":\"$CHK_ID\",\"dispatched_to\":$DISPATCHED_JSON,\"status\":\"dispatched\"}" >> "$LOG_FILE"
 
-# Record dispatch time for grace period calculation
+# Record dispatch timestamp for idle grace period / backstop.
 date +%s > "$LAST_DISPATCH_FILE"
 
 echo "Checkpoint cycle $CHK_ID dispatched."
