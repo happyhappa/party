@@ -84,7 +84,7 @@ ln -sf "$MAIN_CHECKOUT/bin/party-stop" "$BIN_DIR/party-stop"
 log "  ✓ Scripts symlinked in $BIN_DIR (pointing to $MAIN_CHECKOUT)"
 
 # 3a. Deploy wrapper scripts
-for script in cx-checkpoint-inject tmux-inject; do
+for script in tmux-inject; do
     if [[ -f "$SCRIPT_DIR/$script" ]]; then
         chmod +x "$SCRIPT_DIR/$script"
         ln -sf "$SCRIPT_DIR/$script" "$BIN_DIR/$script"
@@ -125,7 +125,7 @@ fi
 
 # 3e. Deploy admin loop scripts
 ADMIN_SCRIPT_DIR="$SCRIPT_DIR/admin"
-for script in admin-loop.sh admin-checkpoint-cycle.sh admin-health-check.sh admin-restart-cx.sh admin-register-panes.sh; do
+for script in admin-loop.sh admin-health-check.sh admin-restart-cx.sh admin-register-panes.sh; do
     if [[ -f "$ADMIN_SCRIPT_DIR/$script" ]]; then
         chmod +x "$ADMIN_SCRIPT_DIR/$script"
         ln -sf "$ADMIN_SCRIPT_DIR/$script" "$BIN_DIR/$script"
@@ -211,7 +211,7 @@ fi
 # 7. Verify no standalone drift
 info "Verifying symlinks..."
 DRIFT=0
-for script in party party-stop relay tmux-inject cx-checkpoint-inject s3-sync relay-cx party-jsonl-filter party-brief-prompt.txt admin-loop.sh admin-checkpoint-cycle.sh admin-health-check.sh admin-restart-cx.sh admin-register-panes.sh; do
+for script in party party-stop relay tmux-inject s3-sync relay-cx party-jsonl-filter party-brief-prompt.txt admin-loop.sh admin-health-check.sh admin-restart-cx.sh admin-register-panes.sh; do
     target="$BIN_DIR/$script"
     if [[ -f "$target" && ! -L "$target" ]]; then
         warn "  DRIFT: $target is a standalone copy, not a symlink"

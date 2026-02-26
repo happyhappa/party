@@ -6,7 +6,7 @@
 # stale output. Auto-restarts CX if dead, auto-compacts CX if context <= 60%.
 #
 # Environment:
-#   RELAY_STATE_DIR        - State directory (required)
+#   RELAY_STATE_DIR        - State directory (default: ~/llm-share/relay/state)
 #   RELAY_ADMIN_ALERT_HOOK - Optional alert command
 #   RELAY_CX_CMD           - CX launch command (for restart-cx)
 #
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATE_DIR="${RELAY_STATE_DIR:?RELAY_STATE_DIR not set — must be exported by bin/party}"
+STATE_DIR="${RELAY_STATE_DIR:-$HOME/llm-share/relay/state}"
 LOG_FILE="$STATE_DIR/checkpoints.log"
 PANES_FILE="$STATE_DIR/panes.json"
 
@@ -26,36 +26,37 @@ fi
 PANES_JSON=$(cat "$PANES_FILE")
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-refresh_panes_if_stale() {
-    local session live_panes mismatch
-    session="${RELAY_TMUX_SESSION:-${TMUX_SESSION:-$(tmux display-message -p '#{session_name}' 2>/dev/null || echo 'party')}}"
-    live_panes=$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null || true)
-    [[ -z "$live_panes" ]] && return
-
-    mismatch=false
-    for role in oc cc cx; do
-        local pane_id
-        pane_id=$(echo "$PANES_JSON" | jq -r ".panes.${role} // empty")
-        [[ -z "$pane_id" ]] && continue
-        if ! echo "$live_panes" | grep -qxF "$pane_id"; then
-            mismatch=true
-            break
-        fi
-    done
-
-    if [[ "$mismatch" == "true" ]]; then
-        echo "Pane map mismatch detected; refreshing panes.json"
-        "$SCRIPT_DIR/admin-register-panes.sh" 2>&1 || echo "WARN: pane refresh failed"
-        PANES_JSON=$(cat "$PANES_FILE")
-    fi
-}
-
 log_anomaly() {
     local role="$1" anomaly="$2" cmd="$3" detail="$4"
     echo "{\"timestamp\":\"$TIMESTAMP\",\"type\":\"health-anomaly\",\"role\":\"$role\",\"anomaly\":\"$anomaly\",\"cmd\":\"$cmd\",\"detail\":\"$detail\"}" >> "$LOG_FILE"
     if [[ -n "${RELAY_ADMIN_ALERT_HOOK:-}" ]]; then
-        "$RELAY_ADMIN_ALERT_HOOK" "health-check anomaly: $role $anomaly" || true
+        $RELAY_ADMIN_ALERT_HOOK "health-check anomaly: $role $anomaly" || true
     fi
+}
+
+# Idle detection based on JSONL mtime — agent is idle if no transcript
+# activity in the last 5 minutes.
+IDLE_THRESHOLD=300  # 5 minutes
+
+is_agent_idle() {
+    local role="$1"
+    local project_dir
+    project_dir=$(jq -r ".${role} // empty" "$STATE_DIR/project-dirs.json" 2>/dev/null)
+    [[ -z "$project_dir" ]] && return 1  # can't determine, assume active
+
+    local latest_jsonl
+    latest_jsonl=$(ls -t "$project_dir"/*.jsonl 2>/dev/null | head -1)
+    [[ -z "$latest_jsonl" ]] && return 1
+
+    local mtime now
+    mtime=$(stat -c %Y "$latest_jsonl" 2>/dev/null || echo 0)
+    now=$(date +%s)
+
+    if (( now - mtime >= IDLE_THRESHOLD )); then
+        return 0  # idle
+    fi
+
+    return 1  # active
 }
 
 # Deadman heartbeat check — verify admin-loop is progressing
@@ -72,14 +73,18 @@ if [[ -f "$HEARTBEAT_FILE" ]]; then
     fi
 fi
 
-refresh_panes_if_stale
-
 declare -A STATUS
 
 for ROLE in oc cc cx; do
     PANE_ID=$(echo "$PANES_JSON" | jq -r ".panes.$ROLE // empty")
     if [[ -z "$PANE_ID" ]]; then
         STATUS[$ROLE]="missing"
+        continue
+    fi
+
+    # Skip detailed health checks for idle OC/CC
+    if [[ "$ROLE" == "oc" || "$ROLE" == "cc" ]] && is_agent_idle "$ROLE"; then
+        STATUS[$ROLE]="idle"
         continue
     fi
 
@@ -125,8 +130,7 @@ for ROLE in oc cc cx; do
     # Error pattern scan (3+ occurrences of same pattern = problem)
     ERROR_FOUND=false
     for pattern in error panic FATAL killed Traceback SIGTERM SIGKILL OOM; do
-        COUNT=$(echo "$TAIL" | grep -ci "$pattern" 2>/dev/null || true)
-        COUNT=${COUNT:-0}; COUNT=${COUNT//[^0-9]/}
+        COUNT=$(echo "$TAIL" | grep -ci "$pattern" 2>/dev/null || echo 0)
         if [[ "$COUNT" -ge 3 ]]; then
             ERROR_FOUND=true
             STATUS[$ROLE]="unhealthy"
