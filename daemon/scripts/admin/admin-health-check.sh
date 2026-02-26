@@ -83,12 +83,6 @@ for ROLE in oc cc cx; do
         continue
     fi
 
-    # Skip detailed health checks for idle OC/CC
-    if [[ "$ROLE" == "oc" || "$ROLE" == "cc" ]] && is_agent_idle "$ROLE"; then
-        STATUS[$ROLE]="idle"
-        continue
-    fi
-
     TAIL=$(tmux capture-pane -t "$PANE_ID" -p -S -20 2>/dev/null || echo "CAPTURE_FAILED")
     CMD=$(tmux display-message -t "$PANE_ID" -p '#{pane_current_command}' 2>/dev/null || echo "UNKNOWN")
 
