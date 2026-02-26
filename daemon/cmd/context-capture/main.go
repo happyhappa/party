@@ -212,16 +212,14 @@ func fetchCheckpoint(role string) (string, string, string) {
 		return "", "", ""
 	}
 
-	// Primary: active task bead (in_progress first, then open, then blocked)
-	for _, status := range []string{"in_progress", "open", "blocked"} {
-		if id, body := queryBead(bdPath, "task", role, status); id != "" {
-			return id, body, "task"
-		}
+	// Primary: active task bead — single query across all active statuses, newest wins
+	if id, body := queryActiveTaskBead(bdPath, role); id != "" {
+		return id, body, "task"
 	}
 
 	// Fallback A: recently completed task (within 2h)
 	twoHoursAgo := time.Now().Add(-2 * time.Hour).Format(time.RFC3339)
-	if id, body := queryBeadWithExtra(bdPath, "task", role, "closed", "--closed-after", twoHoursAgo); id != "" {
+	if id, body := queryBeadWithExtra(bdPath, "task", role, "completed", "--closed-after", twoHoursAgo); id != "" {
 		return id, body, "task_completed"
 	}
 
@@ -239,6 +237,44 @@ func fetchCheckpoint(role string) (string, string, string) {
 	}
 
 	return "", "", ""
+}
+
+// queryActiveTaskBead queries for the newest task bead across all active statuses
+// (open, in_progress, blocked) in a single pass, returning the most recent one.
+func queryActiveTaskBead(bdPath, role string) (string, string) {
+	// Query each active status and collect candidates
+	type candidate struct {
+		id        string
+		createdAt string
+	}
+	var best candidate
+	for _, status := range []string{"open", "in_progress", "blocked"} {
+		args := []string{"list", "--type", "task", "--label", "role:" + role, "--status", status, "--limit", "1", "--json"}
+		listOut, err := exec.Command(bdPath, args...).Output()
+		if err != nil {
+			continue
+		}
+		var beads []map[string]any
+		if err := json.Unmarshal(listOut, &beads); err != nil || len(beads) == 0 {
+			continue
+		}
+		id := firstID(beads[0])
+		if id == "" {
+			continue
+		}
+		createdAt, _ := beads[0]["created_at"].(string)
+		if best.id == "" || createdAt > best.createdAt {
+			best = candidate{id: id, createdAt: createdAt}
+		}
+	}
+	if best.id == "" {
+		return "", ""
+	}
+	body, _ := exec.Command(bdPath, "show", best.id, "--body").Output()
+	if len(body) == 0 {
+		body, _ = exec.Command(bdPath, "show", best.id).Output()
+	}
+	return best.id, strings.TrimSpace(string(body))
 }
 
 // queryBead queries bd for the most recent bead of the given type, role, and optional status.
