@@ -65,6 +65,7 @@ type activeBeadState struct {
 	BeadID       string `json:"bead_id"`
 	MsgSeq       int    `json:"msg_seq"`
 	LastActivity string `json:"last_activity"`
+	BeadStatus   string `json:"bead_status,omitempty"`
 }
 
 type classifierRequest struct {
@@ -84,6 +85,7 @@ type taskBeadManager struct {
 	repo     string
 	logger   *logpkg.EventLog
 	mu       sync.Mutex
+	stateMu  sync.Mutex
 	byRole   map[string]*classifierState
 }
 
@@ -149,19 +151,6 @@ func (m *taskBeadManager) saveState(role string, s *activeBeadState) error {
 	return os.Rename(tmp, path)
 }
 
-func parseStatus(output string) string {
-	for _, line := range strings.Split(output, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(strings.ToLower(trimmed), "status:") {
-			parts := strings.SplitN(trimmed, ":", 2)
-			if len(parts) == 2 {
-				return strings.TrimSpace(parts[1])
-			}
-		}
-	}
-	return ""
-}
-
 func parseClassifierStatus(output string) string {
 	token := strings.ToLower(strings.TrimSpace(output))
 	switch token {
@@ -169,6 +158,15 @@ func parseClassifierStatus(output string) string {
 		return token
 	default:
 		return defaultClassifierStatus
+	}
+}
+
+func normalizeBeadStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "open", defaultClassifierStatus, classifierStatusBlocked, classifierStatusCompleted, classifierStatusStale:
+		return strings.ToLower(strings.TrimSpace(status))
+	default:
+		return "open"
 	}
 }
 
@@ -217,17 +215,17 @@ func (m *taskBeadManager) bdCombinedOutput(timeout time.Duration, args ...string
 	return string(out), nil
 }
 
-func (m *taskBeadManager) beadStatus(beadID string) (string, error) {
-	out, err := m.bdCombinedOutput(15*time.Second, "show", beadID)
-	if err != nil {
-		return "", err
-	}
-	return strings.ToLower(strings.TrimSpace(parseStatus(out))), nil
-}
-
 func (m *taskBeadManager) appendToBead(beadID, message string) error {
 	_, err := m.bdCombinedOutput(15*time.Second, "update", beadID, "--append-notes", message)
 	return err
+}
+
+func (m *taskBeadManager) beadBody(beadID string) (string, error) {
+	out, err := m.bdCombinedOutput(15*time.Second, "show", beadID, "--body")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
 }
 
 func (m *taskBeadManager) updateBeadStatus(beadID, status string) error {
@@ -240,6 +238,7 @@ func (m *taskBeadManager) createTaskBead(target, sender, message string, now tim
 	args := []string{
 		"create",
 		"--type", "task",
+		"--status", "open",
 		"--title", title,
 		"--label", "role:" + target,
 		"--label", "from:" + sender,
@@ -260,6 +259,57 @@ func (m *taskBeadManager) createTaskBead(target, sender, message string, now tim
 
 func (m *taskBeadManager) noteForMessage(envFrom, envTo, payload string, now time.Time) string {
 	return fmt.Sprintf("[%s] %s -> %s\n%s", now.UTC().Format(time.RFC3339), envFrom, envTo, payload)
+}
+
+func (m *taskBeadManager) classifierContext(taskBody, response string) string {
+	base := strings.TrimSpace(taskBody)
+	if base == "" {
+		base = "(task body unavailable)"
+	}
+	return base + "\n---\nResponse: " + strings.TrimSpace(response)
+}
+
+func (m *taskBeadManager) touchStateIfMatch(role, beadID string, msgSeq int, status string) bool {
+	m.stateMu.Lock()
+	defer m.stateMu.Unlock()
+	state, err := m.loadState(role)
+	if err != nil || state == nil {
+		return false
+	}
+	if state.BeadID != beadID || state.MsgSeq != msgSeq {
+		return false
+	}
+	state.LastActivity = time.Now().UTC().Format(time.RFC3339)
+	state.BeadStatus = normalizeBeadStatus(status)
+	if err := m.saveState(role, state); err != nil {
+		log.Printf("task classifier save state error role=%s bead=%s seq=%d: %v", role, beadID, msgSeq, err)
+		return false
+	}
+	return true
+}
+
+func (m *taskBeadManager) sweepStaleActiveBeads() {
+	now := time.Now()
+	for _, role := range []string{"cc", "cx"} {
+		m.stateMu.Lock()
+		state, err := m.loadState(role)
+		m.stateMu.Unlock()
+		if err != nil || state == nil {
+			continue
+		}
+		if normalizeBeadStatus(state.BeadStatus) == classifierStatusCompleted || normalizeBeadStatus(state.BeadStatus) == classifierStatusStale {
+			continue
+		}
+		last, parseErr := time.Parse(time.RFC3339, state.LastActivity)
+		if parseErr != nil || now.Sub(last) < taskBeadFreshWindow {
+			continue
+		}
+		if err := m.updateBeadStatus(state.BeadID, classifierStatusStale); err != nil {
+			log.Printf("task bead stale sweep warning role=%s bead=%s: %v", role, state.BeadID, err)
+			continue
+		}
+		_ = m.touchStateIfMatch(role, state.BeadID, state.MsgSeq, classifierStatusStale)
+	}
 }
 
 func (m *taskBeadManager) classifyAsync(req *classifierRequest) (string, error) {
@@ -306,10 +356,7 @@ func (m *taskBeadManager) runClassifier(role string, req *classifierRequest) {
 				if updateErr := m.updateBeadStatus(req.BeadID, status); updateErr != nil {
 					log.Printf("task classifier status update error role=%s bead=%s seq=%d: %v", role, req.BeadID, req.MsgSeq, updateErr)
 				} else {
-					state.LastActivity = time.Now().UTC().Format(time.RFC3339)
-					if saveErr := m.saveState(role, state); saveErr != nil {
-						log.Printf("task classifier save state error role=%s bead=%s seq=%d: %v", role, req.BeadID, req.MsgSeq, saveErr)
-					}
+					_ = m.touchStateIfMatch(role, req.BeadID, req.MsgSeq, status)
 				}
 			}
 		}
@@ -332,7 +379,9 @@ func (m *taskBeadManager) runClassifier(role string, req *classifierRequest) {
 
 func (m *taskBeadManager) handleOCToAgent(envFrom, envTo, payload string) error {
 	now := time.Now()
+	m.stateMu.Lock()
 	state, err := m.loadState(envTo)
+	m.stateMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("load active bead state: %w", err)
 	}
@@ -342,16 +391,13 @@ func (m *taskBeadManager) handleOCToAgent(envFrom, envTo, payload string) error 
 		if parseErr != nil || now.Sub(last) >= taskBeadFreshWindow {
 			if staleErr := m.updateBeadStatus(state.BeadID, classifierStatusStale); staleErr != nil {
 				log.Printf("task bead stale update warning role=%s bead=%s: %v", envTo, state.BeadID, staleErr)
+			} else {
+				state.BeadStatus = classifierStatusStale
 			}
+		}
+		status := normalizeBeadStatus(state.BeadStatus)
+		if status == classifierStatusCompleted || status == classifierStatusStale {
 			state = nil
-		} else {
-			status, statusErr := m.beadStatus(state.BeadID)
-			if statusErr != nil {
-				log.Printf("task bead status lookup warning role=%s bead=%s: %v", envTo, state.BeadID, statusErr)
-			}
-			if status == classifierStatusCompleted || status == classifierStatusStale {
-				state = nil
-			}
 		}
 	}
 
@@ -360,11 +406,15 @@ func (m *taskBeadManager) handleOCToAgent(envFrom, envTo, payload string) error 
 		if createErr != nil {
 			return fmt.Errorf("create task bead: %w", createErr)
 		}
-		return m.saveState(envTo, &activeBeadState{
+		newState := &activeBeadState{
 			BeadID:       beadID,
 			MsgSeq:       1,
 			LastActivity: now.UTC().Format(time.RFC3339),
-		})
+			BeadStatus:   "open",
+		}
+		m.stateMu.Lock()
+		defer m.stateMu.Unlock()
+		return m.saveState(envTo, newState)
 	}
 
 	note := m.noteForMessage(envFrom, envTo, payload, now)
@@ -373,12 +423,16 @@ func (m *taskBeadManager) handleOCToAgent(envFrom, envTo, payload string) error 
 	}
 	state.MsgSeq++
 	state.LastActivity = now.UTC().Format(time.RFC3339)
+	m.stateMu.Lock()
+	defer m.stateMu.Unlock()
 	return m.saveState(envTo, state)
 }
 
 func (m *taskBeadManager) handleAgentToOC(envFrom, envTo, payload string) error {
 	now := time.Now()
+	m.stateMu.Lock()
 	state, err := m.loadState(envFrom)
+	m.stateMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("load active bead state: %w", err)
 	}
@@ -389,16 +443,33 @@ func (m *taskBeadManager) handleAgentToOC(envFrom, envTo, payload string) error 
 	if err := m.appendToBead(state.BeadID, note); err != nil {
 		return fmt.Errorf("append agent->OC to active bead: %w", err)
 	}
+	m.stateMu.Lock()
+	latest, err := m.loadState(envFrom)
+	if err != nil {
+		m.stateMu.Unlock()
+		return fmt.Errorf("load active bead state for update: %w", err)
+	}
+	if latest == nil || latest.BeadID != state.BeadID {
+		m.stateMu.Unlock()
+		return nil
+	}
+	state = latest
 	state.MsgSeq++
 	state.LastActivity = now.UTC().Format(time.RFC3339)
 	if err := m.saveState(envFrom, state); err != nil {
+		m.stateMu.Unlock()
 		return fmt.Errorf("save active bead state: %w", err)
+	}
+	m.stateMu.Unlock()
+	taskBody, bodyErr := m.beadBody(state.BeadID)
+	if bodyErr != nil {
+		log.Printf("task bead body lookup warning role=%s bead=%s: %v", envFrom, state.BeadID, bodyErr)
 	}
 	req := &classifierRequest{
 		Role:    envFrom,
 		BeadID:  state.BeadID,
 		MsgSeq:  state.MsgSeq,
-		Context: note,
+		Context: m.classifierContext(taskBody, payload),
 	}
 	m.scheduleClassifier(envFrom, req)
 	return nil
@@ -605,6 +676,18 @@ func main() {
 	})
 	runProtected("supervisor", func() error {
 		return super.Start(ctx)
+	})
+	runProtected("task-bead-stale-sweep", func() error {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-ticker.C:
+				taskBeads.sweepStaleActiveBeads()
+			}
+		}
 	})
 	if paneTailer != nil {
 		runProtected("pane-tailer", func() error {
