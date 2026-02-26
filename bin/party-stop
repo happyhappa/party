@@ -243,11 +243,11 @@ kill_by_pidfile() {
 
 kill_by_pidfile "relay-daemon" "$STATE_DIR/relay-daemon.pid"
 
-# --- Step 3: Kill admin-loop ---
-kill_by_pidfile "admin-loop" "$STATE_DIR/admin-loop.pid"
+# --- Step 3: Kill admin-watchdog ---
+kill_by_pidfile "admin-watchdog" "$STATE_DIR/admin-watchdog.pid"
 
 # --- Step 4: Sweep for orphaned processes (belt + suspenders) ---
-for pattern in relay-daemon admin-loop.sh; do
+for pattern in relay-daemon admin-watchdog.sh; do
     for pid in $(pgrep -f "$pattern" 2>/dev/null || true); do
         if [[ -f "/proc/$pid/environ" ]] && \
            tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qF "RELAY_STATE_DIR=$STATE_DIR"; then
@@ -268,7 +268,7 @@ fi
 # --- Step 6: Clean state files ---
 log "Cleaning state files..."
 CLEANED=0
-for f in panes.json admin-loop.pid relay-daemon.pid admin-loop.heartbeat \
+for f in panes.json admin-watchdog.pid relay-daemon.pid admin-watchdog.heartbeat \
          health-hash-oc.txt health-hash-cc.txt health-hash-cx.txt \
          project-dirs.json brief-worker-pids; do
     if [[ -f "$STATE_DIR/$f" ]]; then

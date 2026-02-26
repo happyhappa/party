@@ -59,16 +59,16 @@ is_agent_idle() {
     return 1  # active
 }
 
-# Deadman heartbeat check — verify admin-loop is progressing
-HEARTBEAT_FILE="$STATE_DIR/admin-loop.heartbeat"
+# Deadman heartbeat check — verify admin-watchdog is progressing
+HEARTBEAT_FILE="$STATE_DIR/admin-watchdog.heartbeat"
 if [[ -f "$HEARTBEAT_FILE" ]]; then
     HEARTBEAT_EPOCH=$(cat "$HEARTBEAT_FILE" 2>/dev/null | tr -d '[:space:]')
     if [[ "$HEARTBEAT_EPOCH" =~ ^[0-9]+$ ]]; then
         HEARTBEAT_AGE=$(( $(date +%s) - HEARTBEAT_EPOCH ))
         if (( HEARTBEAT_AGE > 300 )); then
-            log_anomaly "admin" "heartbeat_stale" "admin-loop" "heartbeat ${HEARTBEAT_AGE}s old (>300s critical)"
+            log_anomaly "admin" "heartbeat_stale" "admin-watchdog" "heartbeat ${HEARTBEAT_AGE}s old (>300s critical)"
         elif (( HEARTBEAT_AGE > 120 )); then
-            echo "[admin-health] WARNING: admin-loop heartbeat is ${HEARTBEAT_AGE}s stale (>120s)" >&2
+            echo "[admin-health] WARNING: admin-watchdog heartbeat is ${HEARTBEAT_AGE}s stale (>120s)" >&2
         fi
     fi
 fi
