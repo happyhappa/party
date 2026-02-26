@@ -110,6 +110,18 @@ ln -sf "$SCRIPT_DIR/party-jsonl-filter" "$BIN_DIR/party-jsonl-filter"
 ln -sf "$SCRIPT_DIR/party-brief-prompt.txt" "$BIN_DIR/party-brief-prompt.txt"
 log "  ✓ Pre-compact support scripts symlinked"
 
+# 3d2. Deploy pre-compact hook
+CLAUDE_HOOKS_DIR="$HOME/.claude/hooks"
+mkdir -p "$CLAUDE_HOOKS_DIR"
+HOOKS_DIR="$(dirname "$SCRIPT_DIR")/hooks"
+if [[ -f "$HOOKS_DIR/pre-compact.sh" ]]; then
+    chmod +x "$HOOKS_DIR/pre-compact.sh"
+    ln -sf "$HOOKS_DIR/pre-compact.sh" "$CLAUDE_HOOKS_DIR/pre-compact.sh"
+    log "  ✓ pre-compact.sh symlinked to $CLAUDE_HOOKS_DIR"
+else
+    warn "  ⚠ pre-compact.sh not found in $HOOKS_DIR, skipping"
+fi
+
 # 3e. Deploy admin loop scripts
 ADMIN_SCRIPT_DIR="$SCRIPT_DIR/admin"
 for script in admin-loop.sh admin-checkpoint-cycle.sh admin-health-check.sh admin-restart-cx.sh admin-register-panes.sh; do

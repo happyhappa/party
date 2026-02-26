@@ -58,14 +58,15 @@ Options:
 
 #### 3.1 Create Directory Structure
 ```bash
-mkdir -p ~/llm-share/{relay/{outbox/{oc,cc,cx},processed,log,state/locks},attacks,recovery,reviews,shared/{runbooks,docs}}
+# Relay directories are per-project under <project>/.relay/
+mkdir -p <project>/.relay/{state,log,inbox/{oc,cc,cx}}
 mkdir -p ~/.local/bin
 ```
 
 #### 3.2 Initialize State Files
 ```bash
-echo '{}' > ~/llm-share/relay/state/agents.json
-touch ~/llm-share/relay/state/{checkpoint.json,handoff-marker,health.json}
+echo '{}' > <project>/.relay/state/agents.json
+touch <project>/.relay/state/{checkpoint.json,handoff-marker,health.json}
 ```
 
 #### 3.3 Install CLI Tools
@@ -125,8 +126,8 @@ party [session-name] [project-dir]
 Default session name is `party`. The script:
 1. Creates 3-pane tmux layout: OC (50% left) | CC (top right) / CX (bottom right)
 2. Sets `AGENT_ROLE` environment variable per pane (oc, cc, cx)
-3. Writes pane map to `~/llm-share/relay/state/panes.json`
-4. Starts `admin-loop.sh` as a background process for checkpoint/health orchestration
+3. Writes pane map to `<project>/.relay/state/panes.json`
+4. Starts `admin-loop.sh` via `setsid` for checkpoint/health orchestration
 
 ### Pane Layout
 ```
@@ -142,15 +143,15 @@ The `admin-loop.sh` background process replaces the former admin LLM pane:
 - **Checkpoint cycle** (every 10min) — Injects `/checkpoint --respond` into OC/CC, `/prompts:checkpoint` into CX
 - **Health check** (every 5min) — Heuristic monitoring, auto-restart CX if dead, auto-compact CX at low context
 - **Register panes** — Discovers tmux pane IDs via `@role` options
-- Logs to `~/llm-share/relay/log/admin-loop.log`
-- PID written to `~/llm-share/relay/state/admin-loop.pid`
+- Logs to `<project>/.relay/log/admin-loop.log`
+- PID written to `<project>/.relay/state/admin-loop.pid`
 
 ### Admin Loop Environment Variables
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `RELAY_CHECKPOINT_INTERVAL` | `600` (10m) | Checkpoint cycle frequency (seconds) |
 | `RELAY_HEALTH_CHECK_INTERVAL` | `300` (5m) | Health check frequency (seconds) |
-| `RELAY_STATE_DIR` | `~/llm-share/relay/state` | State directory |
+| `RELAY_STATE_DIR` | `<project>/.relay/state` | State directory |
 | `RELAY_ADMIN_ALERT_HOOK` | (empty) | Shell command to invoke on anomaly |
 
 ---
@@ -165,7 +166,7 @@ journalctl --user -u relay-daemon -f
 
 ### Check Pane Mapping
 ```bash
-cat ~/llm-share/relay/state/panes.json
+cat <project>/.relay/state/panes.json
 ```
 
 ### Test Message Sending
@@ -173,10 +174,6 @@ cat ~/llm-share/relay/state/panes.json
 # From any terminal with AGENT_ROLE set
 export AGENT_ROLE=oc
 relay send cc "Test message from OC"
-
-# Check outbox
-ls -la ~/llm-share/relay/outbox/oc/
-cat ~/llm-share/relay/outbox/oc/*.msg
 ```
 
 ### Verify Agent Role Detection
@@ -188,7 +185,7 @@ echo $AGENT_ROLE
 
 ### Check Event Log
 ```bash
-tail -f ~/llm-share/relay/log/events.jsonl
+tail -f <project>/.relay/log/events.jsonl
 ```
 
 ---
@@ -208,19 +205,14 @@ systemctl --user restart relay-daemon
 ```
 
 ### Messages Not Delivered
-1. **Check outbox directory exists:**
+1. **Check pane mapping:**
    ```bash
-   ls -la ~/llm-share/relay/outbox/{oc,cc,cx}/
-   ```
-
-2. **Check pane mapping:**
-   ```bash
-   cat ~/llm-share/relay/state/panes.json
+   cat <project>/.relay/state/panes.json
    # Verify pane IDs match current tmux session
    tmux list-panes -a -F "#{pane_id}: #{pane_title}"
    ```
 
-3. **Check daemon is watching correct directory:**
+2. **Check daemon is watching correct directory:**
    ```bash
    journalctl --user -u relay-daemon | grep -i watch
    ```
@@ -252,19 +244,16 @@ systemctl --user restart relay-daemon
 
 ### Permission Errors
 ```bash
-# Fix outbox permissions
-chmod 755 ~/llm-share/relay/outbox/{oc,cc,cx,admin}
-
 # Fix state file permissions
-chmod 644 ~/llm-share/relay/state/*.json
+chmod 644 <project>/.relay/state/*.json
 ```
 
 ### Admin Loop Not Running
 If checkpoints/health checks aren't firing:
-1. Check PID file: `cat ~/llm-share/relay/state/admin-loop.pid`
-2. Check if process is alive: `ps -p $(cat ~/llm-share/relay/state/admin-loop.pid)`
-3. Check logs: `tail -50 ~/llm-share/relay/log/admin-loop.log`
-4. Restart manually: `admin-loop.sh >> ~/llm-share/relay/log/admin-loop.log 2>&1 & disown`
+1. Check PID file: `cat <project>/.relay/state/admin-loop.pid`
+2. Check if process is alive: `ps -p $(cat <project>/.relay/state/admin-loop.pid)`
+3. Check logs: `tail -50 <project>/.relay/log/admin-loop.log`
+4. Restart manually: `setsid admin-loop.sh >> "$RELAY_LOG_DIR/admin-loop.log" 2>&1 &`
 
 ---
 
@@ -277,5 +266,5 @@ If checkpoints/health checks aren't firing:
 | `systemctl --user start relay-daemon` | Start daemon |
 | `systemctl --user status relay-daemon` | Check daemon status |
 | `journalctl --user -u relay-daemon -f` | Follow daemon logs |
-| `jq . ~/llm-share/relay/state/panes.json` | View pane mapping (v2 format) |
+| `jq . <project>/.relay/state/panes.json` | View pane mapping (v2 format) |
 | `admin-register-panes.sh` | Re-discover and write pane map |
