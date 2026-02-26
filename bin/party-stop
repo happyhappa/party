@@ -69,13 +69,14 @@ if [[ -f "$PANES_FILE" ]]; then
         [[ -z "$PANE_ID" ]] && continue
 
         # Check if pane exists and has an agent process
+        # CX check must come first — CX runs under node (same as Claude), so check role before command
         CMD=$(tmux display-message -t "$PANE_ID" -p '#{pane_current_command}' 2>/dev/null || echo "")
-        if echo "$CMD" | grep -qE '^(claude|node)$'; then
-            log "  Sending /checkpoint to $ROLE ($PANE_ID)..."
-            tmux send-keys -t "$PANE_ID" "/checkpoint" Enter 2>/dev/null || true
-        elif echo "$CMD" | grep -qE '^(codex|node)$' && [[ "$ROLE" == "cx" ]]; then
+        if [[ "$ROLE" == "cx" ]] && echo "$CMD" | grep -qE '^(codex|node)$'; then
             log "  Sending /compact to cx ($PANE_ID)..."
             tmux send-keys -t "$PANE_ID" "/compact" Enter 2>/dev/null || true
+        elif echo "$CMD" | grep -qE '^(claude|node)$'; then
+            log "  Sending /checkpoint to $ROLE ($PANE_ID)..."
+            tmux send-keys -t "$PANE_ID" "/checkpoint" Enter 2>/dev/null || true
         else
             warn "  $ROLE: no agent process detected (cmd=$CMD), skipping brief"
         fi
