@@ -58,11 +58,16 @@ if [[ "${PARTY_STOP_DETACHED:-}" != "1" && -n "${TMUX:-}" ]]; then
     if [[ "$CURRENT_SESSION" == "$SESSION" ]]; then
         SAFE_SESSION="${SESSION//[^A-Za-z0-9._-]/_}"
         DETACH_LOG="/tmp/party-stop-${SAFE_SESSION}-$(date +%s).log"
+        : >>"$DETACH_LOG"  # pre-create so file exists even if setsid fails
         log "Detaching from target session (log: $DETACH_LOG)"
         PARTY_STOP_DETACHED=1 setsid env -u TMUX "$0" "$SESSION" \
             >>"$DETACH_LOG" 2>&1 </dev/null &
         exit 0
+    else
+        log "Running in-process (inside tmux but different session: current=${CURRENT_SESSION:-unset}, target=$SESSION)"
     fi
+else
+    log "Running in-process (TMUX=${TMUX:+set}${TMUX:-unset}, PARTY_STOP_DETACHED=${PARTY_STOP_DETACHED:-unset})"
 fi
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
