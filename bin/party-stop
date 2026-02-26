@@ -181,8 +181,10 @@ PANES_FILE="$STATE_DIR/panes.json"
 if [[ -f "$PANES_FILE" ]] && tmux has-session -t "$SESSION" 2>/dev/null; then
     CHECKPOINT_PANES=()
     for ROLE in oc cc; do
-        PANE_ID=$(jq -r ".${ROLE} // empty" "$PANES_FILE" 2>/dev/null || true)
+        PANE_ID=$(jq -r "(.panes.${ROLE} // .${ROLE}) // empty" "$PANES_FILE" 2>/dev/null || true)
         if [[ -n "$PANE_ID" ]] && tmux list-panes -t "$PANE_ID" &>/dev/null; then
+            # Clear scrollback before dispatch so we only detect fresh output
+            tmux clear-history -t "$PANE_ID" 2>/dev/null || true
             tmux send-keys -t "$PANE_ID" '/checkpoint' Enter 2>/dev/null || true
             CHECKPOINT_PANES+=("$PANE_ID")
             log "Sent /checkpoint to $ROLE ($PANE_ID)"
@@ -216,11 +218,22 @@ else
 fi
 
 # --- Step 1c: Verify async brief workers ---
+# Workers forked via setsid may complete quickly (success) or crash.
+# Check if still running; if not, inspect log for success sentinel.
 if [[ -n "${BRIEF_WORKER_PIDS+x}" && ${#BRIEF_WORKER_PIDS[@]} -gt 0 ]]; then
     for ROLE in "${!BRIEF_WORKER_PIDS[@]}"; do
         WPID="${BRIEF_WORKER_PIDS[$ROLE]}"
-        if ! kill -0 "$WPID" 2>/dev/null; then
-            warn "Brief worker for $ROLE (pid=$WPID) died early"
+        if kill -0 "$WPID" 2>/dev/null; then
+            log "Brief worker for $ROLE (pid=$WPID) still running"
+        else
+            WORKER_LOG="/tmp/party-stop-brief-${ROLE}-"*".log"
+            # shellcheck disable=SC2086
+            LATEST_WORKER_LOG=$(ls -t $WORKER_LOG 2>/dev/null | head -1)
+            if [[ -n "$LATEST_WORKER_LOG" ]] && grep -qF "completed" "$LATEST_WORKER_LOG" 2>/dev/null; then
+                log "Brief worker for $ROLE completed successfully"
+            else
+                warn "Brief worker for $ROLE (pid=$WPID) exited — check log for details"
+            fi
         fi
     done
 fi
