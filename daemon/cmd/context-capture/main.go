@@ -92,7 +92,6 @@ func runRestoreRender(args []string) {
 	fs := flag.NewFlagSet("restore-render", flag.ExitOnError)
 	configPath := fs.String("config", "", "config file path")
 	tokens := fs.Int("tokens", 0, "override tail token count")
-	includeSummaries := fs.Bool("summaries", true, "include chunk summaries and rollups")
 	_ = fs.Parse(args)
 
 	cfg, err := loadConfig(*configPath)
@@ -118,14 +117,6 @@ func runRestoreRender(args []string) {
 		checkpointSource = "unknown"
 	}
 
-	// Fetch summaries (Phase 2)
-	var stateRollup, chunkSummaries string
-	var lastSummaryOffset int64
-	if *includeSummaries {
-		stateRollup, _ = fetchLatestStateRollup(role)
-		chunkSummaries, lastSummaryOffset = fetchRecentChunkSummaries(role, 3)
-	}
-
 	path, err := contextcapture.DiscoverSessionLog(cfg)
 	if err != nil {
 		path = ""
@@ -138,15 +129,8 @@ func runRestoreRender(args []string) {
 
 	tailText := ""
 	if path != "" {
-		// If we have summaries, skip content already covered (overlap skip)
-		startOffset := lastSummaryOffset
-		if out, err := contextcapture.TailExtractFromOffset(path, tailTokens, cfg.Recovery.TailBytesPerToken, startOffset); err == nil {
+		if out, err := contextcapture.TailExtract(path, tailTokens, cfg.Recovery.TailBytesPerToken); err == nil {
 			tailText = out
-		} else {
-			// Fallback to regular tail
-			if out, err := contextcapture.TailExtract(path, tailTokens, cfg.Recovery.TailBytesPerToken); err == nil {
-				tailText = out
-			}
 		}
 	}
 	if tailText == "" {
@@ -166,23 +150,7 @@ func runRestoreRender(args []string) {
 		fmt.Println(strings.TrimSpace(checkpointBody))
 	}
 
-	// Phase 2: Include summaries section
-	if stateRollup != "" || chunkSummaries != "" {
-		fmt.Println("\n### Session Summaries")
-		if stateRollup != "" {
-			fmt.Println("#### State Rollup")
-			fmt.Println(strings.TrimSpace(stateRollup))
-		}
-		if chunkSummaries != "" {
-			fmt.Println("\n#### Recent Chunks")
-			fmt.Println(strings.TrimSpace(chunkSummaries))
-		}
-	}
-
 	fmt.Println("\n### Recent Activity (from tail capture)")
-	if lastSummaryOffset > 0 {
-		fmt.Printf("*(starting from byte %d to avoid overlap with summaries)*\n\n", lastSummaryOffset)
-	}
 	fmt.Println(tailText)
 }
 
@@ -221,89 +189,6 @@ func fetchCheckpoint(role string) (string, string, string) {
 	}
 
 	return checkpointID, strings.TrimSpace(string(body)), "beads"
-}
-
-// fetchLatestStateRollup retrieves the most recent state_rollup bead for a role.
-func fetchLatestStateRollup(role string) (string, error) {
-	cmd, err := bdCommand("list", "--type", "state_rollup", "--label", "role:"+role, "--limit", "1", "--json")
-	if err != nil {
-		return "", err
-	}
-	listOut, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-
-	beadID := parseCheckpointID(listOut)
-	if beadID == "" {
-		return "", nil
-	}
-
-	bodyCmd, err := bdCommand("show", beadID, "--body")
-	if err != nil {
-		return "", err
-	}
-	body, err := bodyCmd.Output()
-	if err != nil {
-		return "", err
-	}
-
-	return strings.TrimSpace(string(body)), nil
-}
-
-// fetchRecentChunkSummaries retrieves recent chunk_summary beads.
-// Returns the concatenated summaries and the end_offset of the most recent chunk.
-func fetchRecentChunkSummaries(role string, limit int) (string, int64) {
-	cmd, err := bdCommand("list", "--type", "chunk_summary", "--label", "role:"+role, "--limit", fmt.Sprintf("%d", limit), "--json")
-	if err != nil {
-		return "", 0
-	}
-	listOut, err := cmd.Output()
-	if err != nil {
-		return "", 0
-	}
-
-	var beads []map[string]any
-	if err := json.Unmarshal(listOut, &beads); err != nil {
-		return "", 0
-	}
-
-	if len(beads) == 0 {
-		return "", 0
-	}
-
-	var summaries []string
-	var maxOffset int64
-
-	for _, bead := range beads {
-		beadID := firstID(bead)
-		if beadID == "" {
-			continue
-		}
-
-		bodyCmd, err := bdCommand("show", beadID, "--body")
-		if err != nil {
-			continue
-		}
-		body, err := bodyCmd.Output()
-		if err != nil {
-			continue
-		}
-		summaries = append(summaries, strings.TrimSpace(string(body)))
-
-		// Extract end_offset from labels
-		if labels, ok := bead["labels"].(map[string]any); ok {
-			if endOffset, ok := labels["end_offset"].(string); ok {
-				var offset int64
-				fmt.Sscanf(endOffset, "%d", &offset)
-				if offset > maxOffset {
-					maxOffset = offset
-				}
-			}
-		}
-	}
-
-	return strings.Join(summaries, "\n\n---\n\n"), maxOffset
 }
 
 func bdCommand(args ...string) (*exec.Cmd, error) {
