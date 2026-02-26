@@ -67,7 +67,8 @@ if [[ "${PARTY_STOP_DETACHED:-}" != "1" && -n "${TMUX:-}" ]]; then
         log "Running in-process (inside tmux but different session: current=${CURRENT_SESSION:-unset}, target=$SESSION)"
     fi
 else
-    log "Running in-process (TMUX=${TMUX:+set}${TMUX:-unset}, PARTY_STOP_DETACHED=${PARTY_STOP_DETACHED:-unset})"
+    TMUX_STATE="${TMUX:+set}"; TMUX_STATE="${TMUX_STATE:-unset}"
+    log "Running in-process (TMUX=$TMUX_STATE, PARTY_STOP_DETACHED=${PARTY_STOP_DETACHED:-unset})"
 fi
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
