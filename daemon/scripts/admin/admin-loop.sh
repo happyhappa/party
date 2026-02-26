@@ -36,6 +36,10 @@ trap cleanup EXIT SIGTERM SIGINT
 
 log "Started (pid=$$, checkpoint=${CHECKPOINT_INTERVAL}s, health=${HEALTH_CHECK_INTERVAL}s)"
 
+# Refresh pane registration once at startup.
+log "Registering panes at startup"
+"$SCRIPT_DIR/admin-register-panes.sh" 2>&1 || log "Pane registration failed at startup (exit $?)"
+
 LAST_CHECKPOINT=0
 LAST_HEALTH_CHECK=0
 

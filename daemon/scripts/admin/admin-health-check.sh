@@ -26,6 +26,30 @@ fi
 PANES_JSON=$(cat "$PANES_FILE")
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+refresh_panes_if_stale() {
+    local session live_panes mismatch
+    session="${RELAY_TMUX_SESSION:-${TMUX_SESSION:-$(tmux display-message -p '#{session_name}' 2>/dev/null || echo 'party')}}"
+    live_panes=$(tmux list-panes -t "$session" -F '#{pane_id}' 2>/dev/null || true)
+    [[ -z "$live_panes" ]] && return
+
+    mismatch=false
+    for role in oc cc cx; do
+        local pane_id
+        pane_id=$(echo "$PANES_JSON" | jq -r ".panes.${role} // empty")
+        [[ -z "$pane_id" ]] && continue
+        if ! echo "$live_panes" | grep -qxF "$pane_id"; then
+            mismatch=true
+            break
+        fi
+    done
+
+    if [[ "$mismatch" == "true" ]]; then
+        echo "Pane map mismatch detected; refreshing panes.json"
+        "$SCRIPT_DIR/admin-register-panes.sh" 2>&1 || echo "WARN: pane refresh failed"
+        PANES_JSON=$(cat "$PANES_FILE")
+    fi
+}
+
 log_anomaly() {
     local role="$1" anomaly="$2" cmd="$3" detail="$4"
     echo "{\"timestamp\":\"$TIMESTAMP\",\"type\":\"health-anomaly\",\"role\":\"$role\",\"anomaly\":\"$anomaly\",\"cmd\":\"$cmd\",\"detail\":\"$detail\"}" >> "$LOG_FILE"
@@ -33,6 +57,8 @@ log_anomaly() {
         $RELAY_ADMIN_ALERT_HOOK "health-check anomaly: $role $anomaly" || true
     fi
 }
+
+refresh_panes_if_stale
 
 declare -A STATUS
 
