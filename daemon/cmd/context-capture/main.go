@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/norm/relay-daemon/internal/contextcapture"
 )
+
+const bdTimeout = 10 * time.Second
 
 func main() {
 	if len(os.Args) < 2 {
@@ -111,7 +114,9 @@ func runRestoreRender(args []string) {
 		repo = filepath.Base(cwd)
 	}
 
-	checkpointID, checkpointBody, checkpointSource := fetchCheckpoint(role)
+	bdPath := resolveBDPath()
+
+	checkpointID, checkpointBody, checkpointSource := fetchCheckpoint(bdPath, role)
 	if checkpointID == "" {
 		checkpointID = "none"
 	}
@@ -121,16 +126,16 @@ func runRestoreRender(args []string) {
 
 	// If primary source was a task bead, supplement with most recent session brief
 	var sessionBriefSupplement string
-	if strings.HasPrefix(checkpointSource, "task") {
-		sessionBriefSupplement = fetchSessionBrief(role)
+	if strings.HasPrefix(checkpointSource, "task") && bdPath != "" {
+		_, sessionBriefSupplement = queryBeadByLabel(bdPath, role, "kind:session_brief")
 	}
 
 	// Fetch summaries (Phase 2)
 	var stateRollup, chunkSummaries string
 	var lastSummaryOffset int64
-	if *includeSummaries {
-		stateRollup, _ = fetchLatestStateRollup(role)
-		chunkSummaries, lastSummaryOffset = fetchRecentChunkSummaries(role, 3)
+	if *includeSummaries && bdPath != "" {
+		stateRollup, _ = fetchLatestStateRollup(bdPath, role)
+		chunkSummaries, lastSummaryOffset = fetchRecentChunkSummaries(bdPath, role, 3)
 	}
 
 	path, err := contextcapture.DiscoverSessionLog(cfg)
@@ -206,20 +211,35 @@ func loadConfig(path string) (*contextcapture.Config, error) {
 	return contextcapture.Load()
 }
 
-func fetchCheckpoint(role string) (string, string, string) {
+// resolveBDPath finds the bd binary, returning empty string if not found.
+func resolveBDPath() string {
 	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
 	if _, err := exec.LookPath(bdPath); err != nil {
+		return ""
+	}
+	return bdPath
+}
+
+// bdRun executes a bd command with a timeout and returns its output.
+func bdRun(bdPath string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), bdTimeout)
+	defer cancel()
+	return exec.CommandContext(ctx, bdPath, args...).Output()
+}
+
+func fetchCheckpoint(bdPath, role string) (string, string, string) {
+	if bdPath == "" {
 		return "", "", ""
 	}
 
-	// Primary: active task bead — single query across all active statuses, newest wins
+	// Primary: active task bead — single query, filter active statuses in Go
 	if id, body := queryActiveTaskBead(bdPath, role); id != "" {
 		return id, body, "task"
 	}
 
 	// Fallback A: recently completed task (within 2h)
 	twoHoursAgo := time.Now().Add(-2 * time.Hour).Format(time.RFC3339)
-	if id, body := queryBeadWithExtra(bdPath, "task", role, "completed", "--closed-after", twoHoursAgo); id != "" {
+	if id, body := queryBead(bdPath, "task", role, "completed", "--created-after", twoHoursAgo); id != "" {
 		return id, body, "task_completed"
 	}
 
@@ -239,55 +259,46 @@ func fetchCheckpoint(role string) (string, string, string) {
 	return "", "", ""
 }
 
-// queryActiveTaskBead queries for the newest task bead across all active statuses
-// (open, in_progress, blocked) in a single pass, returning the most recent one.
+// queryActiveTaskBead queries all task beads for a role in a single bd call,
+// then filters for active statuses (open, in_progress, blocked) and picks the newest.
 func queryActiveTaskBead(bdPath, role string) (string, string) {
-	// Query each active status and collect candidates
-	type candidate struct {
-		id        string
-		createdAt string
+	activeStatuses := map[string]bool{"open": true, "in_progress": true, "blocked": true}
+
+	listOut, err := bdRun(bdPath,"list", "--type", "task", "--label", "role:"+role, "--limit", "10", "--json")
+	if err != nil {
+		return "", ""
 	}
-	var best candidate
-	for _, status := range []string{"open", "in_progress", "blocked"} {
-		args := []string{"list", "--type", "task", "--label", "role:" + role, "--status", status, "--limit", "1", "--json"}
-		listOut, err := exec.Command(bdPath, args...).Output()
-		if err != nil {
+
+	var beads []map[string]any
+	if err := json.Unmarshal(listOut, &beads); err != nil {
+		return "", ""
+	}
+
+	var bestID, bestCreated string
+	for _, bead := range beads {
+		status, _ := bead["status"].(string)
+		if !activeStatuses[status] {
 			continue
 		}
-		var beads []map[string]any
-		if err := json.Unmarshal(listOut, &beads); err != nil || len(beads) == 0 {
-			continue
-		}
-		id := firstID(beads[0])
+		id := firstID(bead)
 		if id == "" {
 			continue
 		}
-		createdAt, _ := beads[0]["created_at"].(string)
-		if best.id == "" || createdAt > best.createdAt {
-			best = candidate{id: id, createdAt: createdAt}
+		createdAt, _ := bead["created_at"].(string)
+		if bestID == "" || createdAt > bestCreated {
+			bestID = id
+			bestCreated = createdAt
 		}
 	}
-	if best.id == "" {
+	if bestID == "" {
 		return "", ""
 	}
-	body, _ := exec.Command(bdPath, "show", best.id, "--body").Output()
-	if len(body) == 0 {
-		body, _ = exec.Command(bdPath, "show", best.id).Output()
-	}
-	return best.id, strings.TrimSpace(string(body))
+	return bestID, fetchBody(bdPath, bestID)
 }
 
-// queryBead queries bd for the most recent bead of the given type, role, and optional status.
-func queryBead(bdPath, beadType, role, status string) (string, string) {
-	args := []string{"list", "--type", beadType, "--label", "role:" + role, "--limit", "1", "--json"}
-	if status != "" {
-		args = append(args, "--status", status)
-	}
-	return fetchBeadBody(bdPath, args)
-}
-
-// queryBeadWithExtra is like queryBead but appends extra flag pairs (e.g. --closed-after, value).
-func queryBeadWithExtra(bdPath, beadType, role, status string, extra ...string) (string, string) {
+// queryBead queries bd for the most recent bead of the given type, role, and optional
+// status. Extra flag pairs (e.g. "--created-after", value) can be appended.
+func queryBead(bdPath, beadType, role, status string, extra ...string) (string, string) {
 	args := []string{"list", "--type", beadType, "--label", "role:" + role, "--limit", "1", "--json"}
 	if status != "" {
 		args = append(args, "--status", status)
@@ -304,7 +315,7 @@ func queryBeadByLabel(bdPath, role, label string) (string, string) {
 
 // fetchBeadBody runs a bd list query and fetches the body of the first result.
 func fetchBeadBody(bdPath string, listArgs []string) (string, string) {
-	listOut, err := exec.Command(bdPath, listArgs...).Output()
+	listOut, err := bdRun(bdPath,listArgs...)
 	if err != nil {
 		return "", ""
 	}
@@ -314,31 +325,21 @@ func fetchBeadBody(bdPath string, listArgs []string) (string, string) {
 		return "", ""
 	}
 
-	body, _ := exec.Command(bdPath, "show", beadID, "--body").Output()
-	if len(body) == 0 {
-		body, _ = exec.Command(bdPath, "show", beadID).Output()
-	}
-	return beadID, strings.TrimSpace(string(body))
+	return beadID, fetchBody(bdPath, beadID)
 }
 
-// fetchSessionBrief returns the body of the most recent session brief for a role.
-func fetchSessionBrief(role string) string {
-	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
-	if _, err := exec.LookPath(bdPath); err != nil {
-		return ""
+// fetchBody retrieves the body of a bead by ID.
+func fetchBody(bdPath, beadID string) string {
+	body, _ := bdRun(bdPath,"show", beadID, "--body")
+	if len(body) == 0 {
+		body, _ = bdRun(bdPath,"show", beadID)
 	}
-	_, body := queryBeadByLabel(bdPath, role, "kind:session_brief")
-	return body
+	return strings.TrimSpace(string(body))
 }
 
 // fetchLatestStateRollup retrieves the most recent state_rollup bead for a role.
-func fetchLatestStateRollup(role string) (string, error) {
-	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
-	if _, err := exec.LookPath(bdPath); err != nil {
-		return "", err
-	}
-
-	listOut, err := exec.Command(bdPath, "list", "--type", "state_rollup", "--label", "role:"+role, "--limit", "1", "--json").Output()
+func fetchLatestStateRollup(bdPath, role string) (string, error) {
+	listOut, err := bdRun(bdPath,"list", "--type", "state_rollup", "--label", "role:"+role, "--limit", "1", "--json")
 	if err != nil {
 		return "", err
 	}
@@ -348,7 +349,7 @@ func fetchLatestStateRollup(role string) (string, error) {
 		return "", nil
 	}
 
-	body, err := exec.Command(bdPath, "show", beadID, "--body").Output()
+	body, err := bdRun(bdPath,"show", beadID, "--body")
 	if err != nil {
 		return "", err
 	}
@@ -358,13 +359,8 @@ func fetchLatestStateRollup(role string) (string, error) {
 
 // fetchRecentChunkSummaries retrieves recent chunk_summary beads.
 // Returns the concatenated summaries and the end_offset of the most recent chunk.
-func fetchRecentChunkSummaries(role string, limit int) (string, int64) {
-	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
-	if _, err := exec.LookPath(bdPath); err != nil {
-		return "", 0
-	}
-
-	listOut, err := exec.Command(bdPath, "list", "--type", "chunk_summary", "--label", "role:"+role, "--limit", fmt.Sprintf("%d", limit), "--json").Output()
+func fetchRecentChunkSummaries(bdPath, role string, limit int) (string, int64) {
+	listOut, err := bdRun(bdPath,"list", "--type", "chunk_summary", "--label", "role:"+role, "--limit", fmt.Sprintf("%d", limit), "--json")
 	if err != nil {
 		return "", 0
 	}
@@ -387,19 +383,25 @@ func fetchRecentChunkSummaries(role string, limit int) (string, int64) {
 			continue
 		}
 
-		body, err := exec.Command(bdPath, "show", beadID, "--body").Output()
+		body, err := bdRun(bdPath,"show", beadID, "--body")
 		if err != nil {
 			continue
 		}
 		summaries = append(summaries, strings.TrimSpace(string(body)))
 
-		// Extract end_offset from labels
-		if labels, ok := bead["labels"].(map[string]any); ok {
-			if endOffset, ok := labels["end_offset"].(string); ok {
-				var offset int64
-				fmt.Sscanf(endOffset, "%d", &offset)
-				if offset > maxOffset {
-					maxOffset = offset
+		// Extract end_offset from labels (bd returns labels as []string, e.g. ["end_offset:12345"])
+		if labelsRaw, ok := bead["labels"].([]any); ok {
+			for _, l := range labelsRaw {
+				str, ok := l.(string)
+				if !ok {
+					continue
+				}
+				if strings.HasPrefix(str, "end_offset:") {
+					var offset int64
+					fmt.Sscanf(strings.TrimPrefix(str, "end_offset:"), "%d", &offset)
+					if offset > maxOffset {
+						maxOffset = offset
+					}
 				}
 			}
 		}
