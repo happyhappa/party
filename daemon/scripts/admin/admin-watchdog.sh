@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# admin-loop.sh - Admin watchdog loop (health checks + daemon restart)
+# admin-watchdog.sh - Admin watchdog loop (health checks + daemon restart)
 #
 # Runs health checks every 5min and restarts relay-daemon if dead.
 # Started as a background process by the party launcher.
@@ -19,15 +19,15 @@ SLEEP_INTERVAL=30
 
 # Write PID file
 mkdir -p "$STATE_DIR"
-echo $$ > "$STATE_DIR/admin-loop.pid"
+echo $$ > "$STATE_DIR/admin-watchdog.pid"
 
 log() {
-    echo "[admin-loop] $(date '+%H:%M:%S') $1"
+    echo "[admin-watchdog] $(date '+%H:%M:%S') $1"
 }
 
 cleanup() {
     log "Shutting down"
-    rm -f "$STATE_DIR/admin-loop.pid"
+    rm -f "$STATE_DIR/admin-watchdog.pid"
     exit 0
 }
 trap cleanup EXIT SIGTERM SIGINT
@@ -78,7 +78,7 @@ while true; do
     fi
 
     # Write deadman heartbeat
-    date +%s > "$STATE_DIR/admin-loop.heartbeat"
+    date +%s > "$STATE_DIR/admin-watchdog.heartbeat"
 
     sleep "$SLEEP_INTERVAL"
 done

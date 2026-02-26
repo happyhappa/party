@@ -69,11 +69,11 @@ OC_CMD="${RELAY_OC_CMD:-claude ${OC_CONTINUE_FLAG} --model claude-opus-4-6 --dan
 CC_CMD="${RELAY_CC_CMD:-claude --model claude-opus-4-6 --dangerously-skip-permissions}"
 CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir $RELAY_SHARE_DIR --add-dir ~/.cache --add-dir $RELAY_INBOX_DIR/cx}"
 
-# Resolve admin-loop.sh path (follows symlinks to find the real script dir)
-ADMIN_LOOP="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../daemon/scripts/admin/admin-loop.sh"
-if [[ ! -x "$ADMIN_LOOP" ]]; then
+# Resolve admin-watchdog.sh path (follows symlinks to find the real script dir)
+ADMIN_WATCHDOG="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../daemon/scripts/admin/admin-watchdog.sh"
+if [[ ! -x "$ADMIN_WATCHDOG" ]]; then
     # Fallback: check ~/.local/bin symlink target
-    ADMIN_LOOP="$HOME/.local/bin/admin-loop.sh"
+    ADMIN_WATCHDOG="$HOME/.local/bin/admin-watchdog.sh"
 fi
 
 # Colors for status
@@ -106,8 +106,8 @@ if [[ "${1:-}" == "stop" ]]; then
         exit 1
     fi
     log "Stopping party session '$SESSION'..."
-    # Kill admin-loop
-    [[ -f "$STATE_DIR/admin-loop.pid" ]] && kill $(cat "$STATE_DIR/admin-loop.pid") 2>/dev/null || true
+    # Kill admin-watchdog
+    [[ -f "$STATE_DIR/admin-watchdog.pid" ]] && kill $(cat "$STATE_DIR/admin-watchdog.pid") 2>/dev/null || true
     # Kill relay daemon
     [[ -f "$STATE_DIR/relay-daemon.pid" ]] && kill $(cat "$STATE_DIR/relay-daemon.pid") 2>/dev/null || true
     # Kill tmux session
@@ -268,7 +268,7 @@ printf '{"panes":{"oc":"%s","cc":"%s","cx":"%s"},"version":1,"registered_at":"%s
 
 # Force-kill stale processes before starting new ones (two-phase)
 RELAY_PID_FILE="$RELAY_STATE_DIR/relay-daemon.pid"
-ADMIN_PID_FILE="$RELAY_STATE_DIR/admin-loop.pid"
+ADMIN_PID_FILE="$RELAY_STATE_DIR/admin-watchdog.pid"
 KILLED_STALE=false
 
 # Phase 1: Kill known PIDs from pidfiles
@@ -294,10 +294,10 @@ for pid in $(pgrep -f relay-daemon 2>/dev/null || true); do
         KILLED_STALE=true
     fi
 done
-for pid in $(pgrep -f admin-loop.sh 2>/dev/null || true); do
+for pid in $(pgrep -f admin-watchdog.sh 2>/dev/null || true); do
     if [[ -f "/proc/$pid/environ" ]] && \
        tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qF "RELAY_STATE_DIR=$RELAY_STATE_DIR"; then
-        log "Killing orphaned admin-loop (pid=$pid)"
+        log "Killing orphaned admin-watchdog (pid=$pid)"
         kill "$pid" 2>/dev/null || true
         KILLED_STALE=true
     fi
@@ -317,12 +317,12 @@ else
 fi
 
 # Start admin loop as background process
-if [[ -x "$ADMIN_LOOP" ]]; then
-    setsid "$ADMIN_LOOP" >> "$RELAY_LOG_DIR/admin-loop.log" 2>&1 &
+if [[ -x "$ADMIN_WATCHDOG" ]]; then
+    setsid "$ADMIN_WATCHDOG" >> "$RELAY_LOG_DIR/admin-watchdog.log" 2>&1 &
     echo $! > "$ADMIN_PID_FILE"
-    log "Admin loop started (pid=$!, log=$RELAY_LOG_DIR/admin-loop.log)"
+    log "Admin watchdog started (pid=$!, log=$RELAY_LOG_DIR/admin-watchdog.log)"
 else
-    err "Admin loop not found at $ADMIN_LOOP — run install.sh first"
+    err "Admin watchdog not found at $ADMIN_WATCHDOG — run install.sh first"
 fi
 
 # Auto-start beads daemon if .beads dir exists
