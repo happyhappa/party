@@ -60,33 +60,88 @@ LOG_DIR="${RELAY_LOG_DIR:-$(dirname "$STATE_DIR")/log}"
 
 log "Stopping party session '$SESSION' (state: $STATE_DIR)"
 
-# --- Step 1: Capture session briefs from active agent panes ---
-PANES_FILE="$STATE_DIR/panes.json"
-if [[ -f "$PANES_FILE" ]]; then
-    log "Capturing session briefs from active agents..."
-    for ROLE in oc cc cx; do
-        PANE_ID=$(jq -r ".panes.$ROLE // empty" "$PANES_FILE" 2>/dev/null || true)
-        [[ -z "$PANE_ID" ]] && continue
+BRIEF_PROMPT_FILE="$HOME/.local/bin/party-brief-prompt.txt"
 
-        # Check if pane exists and has an agent process
-        # CX check must come first — CX runs under node (same as Claude), so check role before command
-        CMD=$(tmux display-message -t "$PANE_ID" -p '#{pane_current_command}' 2>/dev/null || echo "")
-        if [[ "$ROLE" == "cx" ]] && echo "$CMD" | grep -qE '^(codex|node)$'; then
-            log "  Sending /compact to cx ($PANE_ID)..."
-            tmux send-keys -t "$PANE_ID" "/compact" Enter 2>/dev/null || true
-        elif echo "$CMD" | grep -qE '^(claude|node)$'; then
-            log "  Sending /checkpoint to $ROLE ($PANE_ID)..."
-            tmux send-keys -t "$PANE_ID" "/checkpoint" Enter 2>/dev/null || true
-        else
-            warn "  $ROLE: no agent process detected (cmd=$CMD), skipping brief"
-        fi
+# --- Step 1: Fork async session brief pipelines ---
+# Background brief generation for OC/CC using their JSONL transcripts.
+# These run via setsid so they survive tmux teardown. The bd daemon runs
+# independently, so beads can be written after the session is killed.
+PROJECT_DIRS_FILE="$STATE_DIR/project-dirs.json"
+if [[ -f "$PROJECT_DIRS_FILE" ]] && command -v party-jsonl-filter &>/dev/null && \
+   command -v claude &>/dev/null && [[ -f "$BRIEF_PROMPT_FILE" ]]; then
+    log "Forking async session briefs..."
+    for ROLE in oc cc; do
+        PROJECT_DIR_FOR_ROLE=$(jq -r ".${ROLE} // empty" "$PROJECT_DIRS_FILE" 2>/dev/null || true)
+        [[ -z "$PROJECT_DIR_FOR_ROLE" ]] && continue
+
+        LATEST_JSONL=$(ls -t "$PROJECT_DIR_FOR_ROLE"/*.jsonl 2>/dev/null | head -1)
+        [[ -z "$LATEST_JSONL" || ! -s "$LATEST_JSONL" ]] && continue
+
+        BRIEF_LOG="/tmp/party-stop-brief-${ROLE}-$(date +%s).log"
+        BRIEF_MODEL="${PARTY_BRIEF_MODEL:-sonnet}"
+        BRIEF_TIMEOUT="${PARTY_BRIEF_TIMEOUT:-120}"
+
+        # Fork a self-contained worker via setsid (survives tmux kill)
+        setsid bash -c '
+            set -o pipefail
+            ROLE="$1"; JSONL="$2"; PROMPT_FILE="$3"; MODEL="$4"; TIMEOUT="$5"; LOG="$6"
+            exec >>"$LOG" 2>&1
+
+            echo "[$(date)] Starting shutdown brief for $ROLE"
+
+            # Filter transcript
+            FILTERED=$(mktemp -t "party-stop-filtered-${ROLE}-XXXXXX")
+            trap "rm -f $FILTERED" EXIT
+
+            if ! party-jsonl-filter < "$JSONL" > "$FILTERED"; then
+                echo "[$(date)] Filter failed for $ROLE"
+                exit 1
+            fi
+
+            if [[ ! -s "$FILTERED" ]]; then
+                echo "[$(date)] Empty filtered output for $ROLE"
+                exit 1
+            fi
+
+            # Generate brief
+            BRIEF_OUTPUT=$(mktemp -t "party-stop-brief-${ROLE}-XXXXXX")
+            trap "rm -f $FILTERED $BRIEF_OUTPUT" EXIT
+
+            if ! timeout "$TIMEOUT" claude --model "$MODEL" --print -p "$(cat "$PROMPT_FILE")" < "$FILTERED" > "$BRIEF_OUTPUT"; then
+                echo "[$(date)] Claude brief generation failed for $ROLE"
+                exit 1
+            fi
+
+            if [[ ! -s "$BRIEF_OUTPUT" ]]; then
+                echo "[$(date)] Empty brief output for $ROLE"
+                exit 1
+            fi
+
+            # Write bead
+            if command -v bd &>/dev/null; then
+                bd create \
+                    --type checkpoint \
+                    --title "${ROLE} shutdown brief $(date "+%Y-%m-%d %H:%M")" \
+                    --label "role:${ROLE}" \
+                    --label "source:shutdown" \
+                    --label "kind:session_brief" \
+                    --body "$(cat "$BRIEF_OUTPUT")" --silent >/dev/null 2>&1 || {
+                    echo "[$(date)] Bead write failed for $ROLE"
+                    exit 1
+                }
+            fi
+
+            echo "[$(date)] Shutdown brief for $ROLE completed"
+        ' _ "$ROLE" "$LATEST_JSONL" "$BRIEF_PROMPT_FILE" "$BRIEF_MODEL" "$BRIEF_TIMEOUT" "$BRIEF_LOG" \
+          </dev/null &
+        log "  $ROLE: brief pipeline forked (log: $BRIEF_LOG)"
     done
-
-    # Give agents a few seconds to process checkpoint
-    log "  Waiting 5s for checkpoint processing..."
-    sleep 5
 else
-    warn "No panes.json found — skipping brief capture"
+    if [[ ! -f "$PROJECT_DIRS_FILE" ]]; then
+        warn "No project-dirs.json — skipping async briefs"
+    else
+        warn "Missing party-jsonl-filter, claude, or brief prompt — skipping async briefs"
+    fi
 fi
 
 # --- Step 2: Kill relay daemon ---
@@ -147,7 +202,7 @@ log "Cleaning state files..."
 CLEANED=0
 for f in panes.json admin-loop.pid relay-daemon.pid admin-loop.heartbeat \
          health-hash-oc.txt health-hash-cc.txt health-hash-cx.txt \
-         last-checkpoint-dispatch project-dirs.json; do
+         last-checkpoint-dispatch project-dirs.json cx-chk-id; do
     if [[ -f "$STATE_DIR/$f" ]]; then
         rm -f "$STATE_DIR/$f"
         (( CLEANED++ )) || true

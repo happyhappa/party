@@ -79,6 +79,7 @@ fi
 # 3. Install scripts
 info "Installing scripts..."
 ln -sf "$MAIN_CHECKOUT/bin/party" "$BIN_DIR/party"
+ln -sf "$MAIN_CHECKOUT/bin/party-stop" "$BIN_DIR/party-stop"
 [[ -f "$SCRIPT_DIR/s3-sync" ]] && ln -sf "$SCRIPT_DIR/s3-sync" "$BIN_DIR/s3-sync" || true
 log "  ✓ Scripts symlinked in $BIN_DIR (pointing to $MAIN_CHECKOUT)"
 
@@ -210,7 +211,7 @@ fi
 # 7. Verify no standalone drift
 info "Verifying symlinks..."
 DRIFT=0
-for script in party relay tmux-inject cx-checkpoint-inject s3-sync relay-cx party-jsonl-filter party-brief-prompt.txt admin-loop.sh admin-checkpoint-cycle.sh admin-health-check.sh admin-restart-cx.sh admin-register-panes.sh; do
+for script in party party-stop relay tmux-inject cx-checkpoint-inject s3-sync relay-cx party-jsonl-filter party-brief-prompt.txt admin-loop.sh admin-checkpoint-cycle.sh admin-health-check.sh admin-restart-cx.sh admin-register-panes.sh; do
     target="$BIN_DIR/$script"
     if [[ -f "$target" && ! -L "$target" ]]; then
         warn "  DRIFT: $target is a standalone copy, not a symlink"
