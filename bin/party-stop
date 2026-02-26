@@ -45,7 +45,8 @@ fi
 if [[ "${PARTY_STOP_DETACHED:-}" != "1" && -n "${TMUX:-}" ]]; then
     CURRENT_SESSION=$(tmux display-message -p '#{session_name}' 2>/dev/null || true)
     if [[ "$CURRENT_SESSION" == "$SESSION" ]]; then
-        DETACH_LOG="/tmp/party-stop-${SESSION}-$(date +%s).log"
+        SAFE_SESSION="${SESSION//[^A-Za-z0-9._-]/_}"
+        DETACH_LOG="/tmp/party-stop-${SAFE_SESSION}-$(date +%s).log"
         log "Detaching from target session (log: $DETACH_LOG)"
         PARTY_STOP_DETACHED=1 setsid env -u TMUX "$0" "$SESSION" \
             >>"$DETACH_LOG" 2>&1 </dev/null &
