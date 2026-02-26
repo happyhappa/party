@@ -191,48 +191,7 @@ else
     fi
 fi
 
-# --- Step 1b: Pre-kill checkpoint dispatch to OC/CC ---
-PANES_FILE="$STATE_DIR/panes.json"
-if [[ -f "$PANES_FILE" ]] && tmux has-session -t "$SESSION" 2>/dev/null; then
-    CHECKPOINT_PANES=()
-    for ROLE in oc cc; do
-        PANE_ID=$(jq -r "(.panes.${ROLE} // .${ROLE}) // empty" "$PANES_FILE" 2>/dev/null || true)
-        if [[ -n "$PANE_ID" ]] && tmux list-panes -t "$PANE_ID" &>/dev/null; then
-            # Clear scrollback before dispatch so we only detect fresh output
-            tmux clear-history -t "$PANE_ID" 2>/dev/null || true
-            tmux send-keys -t "$PANE_ID" '/checkpoint' Enter 2>/dev/null || true
-            CHECKPOINT_PANES+=("$PANE_ID")
-            log "Sent /checkpoint to $ROLE ($PANE_ID)"
-        fi
-    done
-
-    # Bounded wait for checkpoint completion (up to 15s)
-    if [[ ${#CHECKPOINT_PANES[@]} -gt 0 ]]; then
-        log "Waiting up to 15s for checkpoints..."
-        ELAPSED=0
-        while (( ELAPSED < 15 )); do
-            ALL_DONE=true
-            for PANE_ID in "${CHECKPOINT_PANES[@]}"; do
-                if ! tmux capture-pane -t "$PANE_ID" -p 2>/dev/null | grep -qF 'Checkpoint created'; then
-                    ALL_DONE=false
-                    break
-                fi
-            done
-            $ALL_DONE && break
-            sleep 1
-            (( ELAPSED++ )) || true
-        done
-        if $ALL_DONE; then
-            log "All checkpoints completed"
-        else
-            warn "Checkpoint wait timed out after 15s — proceeding with teardown"
-        fi
-    fi
-else
-    [[ ! -f "$PANES_FILE" ]] && warn "No panes.json — skipping pre-kill checkpoints"
-fi
-
-# --- Step 1c: Verify async brief workers ---
+# --- Step 1b: Verify async brief workers ---
 # Workers forked via setsid may complete quickly (success) or crash.
 # Check if still running; if not, inspect log for success sentinel.
 if [[ -n "${BRIEF_WORKER_PIDS+x}" && ${#BRIEF_WORKER_PIDS[@]} -gt 0 ]]; then
@@ -311,7 +270,7 @@ log "Cleaning state files..."
 CLEANED=0
 for f in panes.json admin-loop.pid relay-daemon.pid admin-loop.heartbeat \
          health-hash-oc.txt health-hash-cc.txt health-hash-cx.txt \
-         last-checkpoint-dispatch project-dirs.json cx-chk-id brief-worker-pids; do
+         project-dirs.json brief-worker-pids; do
     if [[ -f "$STATE_DIR/$f" ]]; then
         rm -f "$STATE_DIR/$f"
         (( CLEANED++ )) || true
