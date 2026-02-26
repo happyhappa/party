@@ -58,11 +58,17 @@ if [[ "${PARTY_STOP_DETACHED:-}" != "1" && -n "${TMUX:-}" ]]; then
     if [[ "$CURRENT_SESSION" == "$SESSION" ]]; then
         SAFE_SESSION="${SESSION//[^A-Za-z0-9._-]/_}"
         DETACH_LOG="/tmp/party-stop-${SAFE_SESSION}-$(date +%s).log"
+        : >>"$DETACH_LOG"  # pre-create so file exists even if setsid fails
         log "Detaching from target session (log: $DETACH_LOG)"
         PARTY_STOP_DETACHED=1 setsid env -u TMUX "$0" "$SESSION" \
             >>"$DETACH_LOG" 2>&1 </dev/null &
         exit 0
+    else
+        log "Running in-process (inside tmux but different session: current=${CURRENT_SESSION:-unset}, target=$SESSION)"
     fi
+else
+    TMUX_STATE="${TMUX:+set}"; TMUX_STATE="${TMUX_STATE:-unset}"
+    log "Running in-process (TMUX=$TMUX_STATE, PARTY_STOP_DETACHED=${PARTY_STOP_DETACHED:-unset})"
 fi
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -71,9 +77,18 @@ if ! tmux has-session -t "$SESSION" 2>/dev/null; then
 fi
 
 # --- Resolve state directory ---
-STATE_DIR="${RELAY_STATE_DIR:-}"
-if [[ -z "$STATE_DIR" ]]; then
+# Always query target session first to avoid cross-session contamination
+# (caller's RELAY_STATE_DIR may point to a different session's state)
+STATE_DIR=""
+if tmux has-session -t "$SESSION" 2>/dev/null; then
     STATE_DIR=$(tmux show-environment -t "$SESSION" RELAY_STATE_DIR 2>/dev/null | cut -d= -f2- || true)
+fi
+# Fallback to caller env only if target query failed (session already dead)
+if [[ -z "$STATE_DIR" ]]; then
+    if [[ -n "${RELAY_STATE_DIR:-}" ]]; then
+        warn "Using caller RELAY_STATE_DIR as fallback (target session env unavailable)"
+        STATE_DIR="$RELAY_STATE_DIR"
+    fi
 fi
 
 if [[ -z "$STATE_DIR" ]]; then
