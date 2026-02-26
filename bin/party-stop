@@ -162,12 +162,12 @@ if [[ -f "$PROJECT_DIRS_FILE" ]] && command -v party-jsonl-filter &>/dev/null &&
             # Write bead
             if command -v bd &>/dev/null; then
                 bd create \
-                    --type checkpoint \
+                    --type task \
                     --title "${ROLE} shutdown brief $(date "+%Y-%m-%d %H:%M")" \
                     --label "role:${ROLE}" \
                     --label "source:shutdown" \
                     --label "kind:session_brief" \
-                    --body "$(cat "$BRIEF_OUTPUT")" --silent >/dev/null 2>&1 || {
+                    --description "$(cat "$BRIEF_OUTPUT")" --silent >/dev/null 2>&1 || {
                     echo "[$(date)] Bead write failed for $ROLE"
                     exit 1
                 }

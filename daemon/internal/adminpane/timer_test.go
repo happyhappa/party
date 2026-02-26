@@ -16,14 +16,14 @@ func noopInjector() *tmux.Injector {
 }
 
 func TestAllowedCommands(t *testing.T) {
-	allowed := []string{"/checkpoint-cycle", "/health-check", "/ack", "/exit"}
+	allowed := []string{"/health-check", "/ack", "/exit"}
 	for _, cmd := range allowed {
 		if !allowedCommands[cmd] {
 			t.Errorf("%q should be allowed", cmd)
 		}
 	}
 
-	rejected := []string{"/plan", "/attack", "rm -rf /", "echo hello"}
+	rejected := []string{"/plan", "/attack", "/checkpoint-cycle", "rm -rf /", "echo hello"}
 	for _, cmd := range rejected {
 		if allowedCommands[cmd] {
 			t.Errorf("%q should NOT be allowed", cmd)
@@ -48,24 +48,12 @@ func TestRecordInjectTime(t *testing.T) {
 	}
 }
 
-func TestCheckpointCycleIncrement(t *testing.T) {
-	cfg := config.Default()
-	cfg.CheckpointInterval = 50 * time.Millisecond
-	cfg.HealthCheckInterval = 10 * time.Second // don't fire during test
-
-	timer := NewAdminTimer(noopInjector(), cfg, nil)
-
-	if timer.CheckpointCycles() != 0 {
-		t.Errorf("initial cycles = %d, want 0", timer.CheckpointCycles())
-	}
-}
-
 func TestInjectCommandReturnsFalseOnFailure(t *testing.T) {
 	cfg := config.Default()
 	// noopInjector has no "admin" target, so Inject will fail
 	timer := NewAdminTimer(noopInjector(), cfg, nil)
 
-	if timer.injectCommand("/checkpoint-cycle") {
+	if timer.injectCommand("/health-check") {
 		t.Error("injectCommand should return false when inject fails (no admin target)")
 	}
 }
@@ -81,7 +69,6 @@ func TestInjectCommandReturnsFalseOnRejected(t *testing.T) {
 
 func TestStartCancellation(t *testing.T) {
 	cfg := config.Default()
-	cfg.CheckpointInterval = 100 * time.Millisecond
 	cfg.HealthCheckInterval = 100 * time.Millisecond
 
 	timer := NewAdminTimer(noopInjector(), cfg, nil)

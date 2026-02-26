@@ -276,24 +276,14 @@ func TestNeedsRecycleThenRecycleResetsCounters(t *testing.T) {
 		t.Error("3 cycles should trigger recycle (threshold=3)")
 	}
 
-	// Simulate the timer's counter reset flow
-	timer := NewAdminTimer(noopInjector(), cfg, nil)
-	timer.SetRecycler(r)
-
-	// Manually simulate what happens after recycle
+	// Simulate recycle and counter reset
 	err := r.Recycle(context.Background())
 	if err != nil {
 		t.Fatalf("Recycle failed: %v", err)
 	}
 
-	// Timer would reset counters
-	timer.mu.Lock()
-	timer.checkpointCycles = 0
-	timer.startTime = time.Now()
-	timer.mu.Unlock()
-
-	// After reset, NeedsRecycle should be false
-	if r.NeedsRecycle(timer.CheckpointCycles(), timer.StartTime()) {
+	// After reset (0 cycles, fresh start time), NeedsRecycle should be false
+	if r.NeedsRecycle(0, time.Now()) {
 		t.Error("after counter reset, NeedsRecycle should be false")
 	}
 }

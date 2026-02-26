@@ -15,11 +15,10 @@ import (
 
 // allowedCommands is the set of commands that may be injected into the admin pane.
 var allowedCommands = map[string]bool{
-	"/checkpoint-cycle": true,
-	"/health-check":     true,
-	"/register-panes":   true,
-	"/ack":              true,
-	"/exit":             true,
+	"/health-check":   true,
+	"/register-panes": true,
+	"/ack":            true,
+	"/exit":           true,
 }
 
 // AdminTimer manages periodic injection of control-plane commands into the admin pane.
@@ -29,8 +28,7 @@ type AdminTimer struct {
 	logger   *logpkg.EventLog
 
 	mu               sync.Mutex
-	checkpointCycles int
-	lastInjectTime      time.Time
+	lastInjectTime   time.Time
 	startTime        time.Time
 	lastRecycleTime  time.Time
 	paneMapRefreshed bool
@@ -56,37 +54,24 @@ func NewAdminTimer(injector *tmux.Injector, cfg *config.Config, logger *logpkg.E
 	}
 }
 
-// SetIdleDetector attaches an idle detector for skipping checkpoints when all agents are idle.
+// SetIdleDetector attaches an idle detector for adaptive health-check frequency.
 func (t *AdminTimer) SetIdleDetector(d *IdleDetector) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.idleDetector = d
 }
 
-// SetRecycler attaches a recycler for triggering admin recycles after checkpoint cycles.
+// SetRecycler attaches a recycler for triggering admin recycles.
 func (t *AdminTimer) SetRecycler(r *Recycler) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.recycler = r
 }
 
-// Start launches checkpoint and health-check ticker goroutines.
+// Start launches the health-check ticker goroutine.
 // Blocks until ctx is cancelled.
 func (t *AdminTimer) Start(ctx context.Context) {
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		t.runCheckpointTicker(ctx)
-	}()
-
-	go func() {
-		defer wg.Done()
-		t.runHealthTicker(ctx)
-	}()
-
-	wg.Wait()
+	t.runHealthTicker(ctx)
 }
 
 // recordInjectTime updates lastInjectTime under lock after a successful injection.
@@ -96,72 +81,11 @@ func (t *AdminTimer) recordInjectTime() {
 	t.lastInjectTime = time.Now()
 }
 
-// CheckpointCycles returns the current checkpoint cycle count.
-func (t *AdminTimer) CheckpointCycles() int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.checkpointCycles
-}
-
 // StartTime returns the timer's start time.
 func (t *AdminTimer) StartTime() time.Time {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.startTime
-}
-
-func (t *AdminTimer) runCheckpointTicker(ctx context.Context) {
-	ticker := time.NewTicker(t.cfg.CheckpointInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			t.refreshPaneMapIfStale()
-
-			// Skip checkpoint if all agents are idle (unless backstop forces it)
-			t.mu.Lock()
-			idle := t.idleDetector
-			t.mu.Unlock()
-			if idle != nil && idle.AllAgentsIdle() && !idle.ShouldBackstop() {
-				log.Printf("admin timer: all agents idle, skipping checkpoint-cycle")
-				t.logEvent("checkpoint_skipped_idle", "")
-				continue
-			}
-
-			if t.injectCommand("/checkpoint-cycle") && idle != nil {
-				idle.RecordCheckpointInjection()
-			}
-
-			t.mu.Lock()
-			t.checkpointCycles++
-			cycles := t.checkpointCycles
-			start := t.startTime
-			recycler := t.recycler
-			t.mu.Unlock()
-
-			// Check if recycle is needed
-			if recycler != nil && recycler.NeedsRecycle(cycles, start) {
-				if err := recycler.Recycle(ctx); err != nil {
-					log.Printf("admin recycle failed: %v", err)
-					t.logEvent("admin_recycle_error", err.Error())
-				} else {
-					t.logEvent("admin_recycled", "")
-					// Reset counters and staleness flag
-					now := time.Now()
-					t.mu.Lock()
-					t.checkpointCycles = 0
-					t.startTime = now
-					t.lastInjectTime = now
-					t.lastRecycleTime = now
-					t.paneMapRefreshed = false
-					t.mu.Unlock()
-				}
-			}
-		}
-	}
 }
 
 func (t *AdminTimer) runHealthTicker(ctx context.Context) {
