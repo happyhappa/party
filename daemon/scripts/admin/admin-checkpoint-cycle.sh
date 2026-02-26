@@ -189,7 +189,11 @@ if [[ -n "$CX_PANE" ]]; then
 fi
 
 # Log the dispatch
-DISPATCHED_JSON=$(printf '%s\n' "${DISPATCHED[@]}" | jq -R . | jq -s .)
+if (( ${#DISPATCHED[@]} == 0 )); then
+    DISPATCHED_JSON="[]"
+else
+    DISPATCHED_JSON=$(printf '%s\n' "${DISPATCHED[@]}" | jq -R . | jq -s .)
+fi
 echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"checkpoint-cycle\",\"cycle_id\":\"$CHK_ID\",\"dispatched_to\":$DISPATCHED_JSON,\"status\":\"dispatched\"}" >> "$LOG_FILE"
 
 # Record dispatch timestamp for idle grace period / backstop.

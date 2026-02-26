@@ -54,7 +54,7 @@ log_anomaly() {
     local role="$1" anomaly="$2" cmd="$3" detail="$4"
     echo "{\"timestamp\":\"$TIMESTAMP\",\"type\":\"health-anomaly\",\"role\":\"$role\",\"anomaly\":\"$anomaly\",\"cmd\":\"$cmd\",\"detail\":\"$detail\"}" >> "$LOG_FILE"
     if [[ -n "${RELAY_ADMIN_ALERT_HOOK:-}" ]]; then
-        $RELAY_ADMIN_ALERT_HOOK "health-check anomaly: $role $anomaly" || true
+        "$RELAY_ADMIN_ALERT_HOOK" "health-check anomaly: $role $anomaly" || true
     fi
 }
 

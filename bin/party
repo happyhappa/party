@@ -92,28 +92,7 @@ err() {
 # Handle 'party stop' subcommand
 if [[ "${1:-}" == "stop" ]]; then
     shift
-    SESSION="${1:-}"
-    if [[ -z "$SESSION" ]]; then
-        err "Usage: party stop <session-name>"
-        err "Running party sessions:"
-        tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^party-' || err '  (none)'
-        exit 1
-    fi
-    # Read RELAY_STATE_DIR from the tmux session's environment
-    STATE_DIR=$(tmux show-environment -t "$SESSION" RELAY_STATE_DIR 2>/dev/null | cut -d= -f2-)
-    if [[ -z "$STATE_DIR" ]]; then
-        err "Cannot find RELAY_STATE_DIR for session $SESSION"
-        exit 1
-    fi
-    log "Stopping party session '$SESSION'..."
-    # Kill admin-loop
-    [[ -f "$STATE_DIR/admin-loop.pid" ]] && kill $(cat "$STATE_DIR/admin-loop.pid") 2>/dev/null || true
-    # Kill relay daemon
-    [[ -f "$STATE_DIR/relay-daemon.pid" ]] && kill $(cat "$STATE_DIR/relay-daemon.pid") 2>/dev/null || true
-    # Kill tmux session
-    tmux kill-session -t "$SESSION" 2>/dev/null || true
-    log "Session '$SESSION' stopped."
-    exit 0
+    exec party-stop "$@"
 fi
 
 # Check if session already exists
