@@ -13,6 +13,9 @@
 
 set -euo pipefail
 
+# Clean stale temp files from previous runs (older than 1 hour)
+find /tmp -maxdepth 1 -name 'party-stop-*' -mmin +60 -delete 2>/dev/null || true
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -33,10 +36,18 @@ if [[ -z "$SESSION" ]]; then
 fi
 
 if [[ -z "$SESSION" ]]; then
-    err "Usage: party-stop [session-name]"
-    err "Running party sessions:"
-    tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^party-' || err '  (none)'
-    exit 1
+    # Auto-select if exactly one party session is running
+    PARTY_SESSIONS=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep '^party-' || true)
+    PARTY_COUNT=$(echo "$PARTY_SESSIONS" | grep -c . 2>/dev/null || echo 0)
+    if [[ "$PARTY_COUNT" -eq 1 && -n "$PARTY_SESSIONS" ]]; then
+        SESSION="$PARTY_SESSIONS"
+        log "Auto-detected session: $SESSION"
+    else
+        err "Usage: party-stop [session-name]"
+        err "Running party sessions:"
+        echo "$PARTY_SESSIONS" | grep . || err '  (none)'
+        exit 1
+    fi
 fi
 
 # --- Self-detach if running inside the target tmux session ---
@@ -85,6 +96,7 @@ PROJECT_DIRS_FILE="$STATE_DIR/project-dirs.json"
 if [[ -f "$PROJECT_DIRS_FILE" ]] && command -v party-jsonl-filter &>/dev/null && \
    command -v claude &>/dev/null && [[ -f "$BRIEF_PROMPT_FILE" ]]; then
     log "Forking async session briefs..."
+    declare -A BRIEF_WORKER_PIDS=()
     for ROLE in oc cc; do
         PROJECT_DIR_FOR_ROLE=$(jq -r ".${ROLE} // empty" "$PROJECT_DIRS_FILE" 2>/dev/null || true)
         [[ -z "$PROJECT_DIR_FOR_ROLE" ]] && continue
@@ -149,14 +161,68 @@ if [[ -f "$PROJECT_DIRS_FILE" ]] && command -v party-jsonl-filter &>/dev/null &&
             echo "[$(date)] Shutdown brief for $ROLE completed"
         ' _ "$ROLE" "$LATEST_JSONL" "$BRIEF_PROMPT_FILE" "$BRIEF_MODEL" "$BRIEF_TIMEOUT" "$BRIEF_LOG" \
           </dev/null &
-        log "  $ROLE: brief pipeline forked (log: $BRIEF_LOG)"
+        BRIEF_WORKER_PIDS[$ROLE]=$!
+        log "  $ROLE: brief pipeline forked (pid=${BRIEF_WORKER_PIDS[$ROLE]}, log: $BRIEF_LOG)"
     done
+    # Write worker PIDs for external monitoring
+    if [[ ${#BRIEF_WORKER_PIDS[@]} -gt 0 ]]; then
+        printf '%s\n' "${BRIEF_WORKER_PIDS[@]}" > "$STATE_DIR/brief-worker-pids"
+    fi
 else
     if [[ ! -f "$PROJECT_DIRS_FILE" ]]; then
         warn "No project-dirs.json — skipping async briefs"
     else
         warn "Missing party-jsonl-filter, claude, or brief prompt — skipping async briefs"
     fi
+fi
+
+# --- Step 1b: Pre-kill checkpoint dispatch to OC/CC ---
+PANES_FILE="$STATE_DIR/panes.json"
+if [[ -f "$PANES_FILE" ]] && tmux has-session -t "$SESSION" 2>/dev/null; then
+    CHECKPOINT_PANES=()
+    for ROLE in oc cc; do
+        PANE_ID=$(jq -r ".${ROLE} // empty" "$PANES_FILE" 2>/dev/null || true)
+        if [[ -n "$PANE_ID" ]] && tmux list-panes -t "$PANE_ID" &>/dev/null; then
+            tmux send-keys -t "$PANE_ID" '/checkpoint' Enter 2>/dev/null || true
+            CHECKPOINT_PANES+=("$PANE_ID")
+            log "Sent /checkpoint to $ROLE ($PANE_ID)"
+        fi
+    done
+
+    # Bounded wait for checkpoint completion (up to 15s)
+    if [[ ${#CHECKPOINT_PANES[@]} -gt 0 ]]; then
+        log "Waiting up to 15s for checkpoints..."
+        ELAPSED=0
+        while (( ELAPSED < 15 )); do
+            ALL_DONE=true
+            for PANE_ID in "${CHECKPOINT_PANES[@]}"; do
+                if ! tmux capture-pane -t "$PANE_ID" -p 2>/dev/null | grep -qF 'Checkpoint created'; then
+                    ALL_DONE=false
+                    break
+                fi
+            done
+            $ALL_DONE && break
+            sleep 1
+            (( ELAPSED++ )) || true
+        done
+        if $ALL_DONE; then
+            log "All checkpoints completed"
+        else
+            warn "Checkpoint wait timed out after 15s — proceeding with teardown"
+        fi
+    fi
+else
+    [[ ! -f "$PANES_FILE" ]] && warn "No panes.json — skipping pre-kill checkpoints"
+fi
+
+# --- Step 1c: Verify async brief workers ---
+if [[ -n "${BRIEF_WORKER_PIDS+x}" && ${#BRIEF_WORKER_PIDS[@]} -gt 0 ]]; then
+    for ROLE in "${!BRIEF_WORKER_PIDS[@]}"; do
+        WPID="${BRIEF_WORKER_PIDS[$ROLE]}"
+        if ! kill -0 "$WPID" 2>/dev/null; then
+            warn "Brief worker for $ROLE (pid=$WPID) died early"
+        fi
+    done
 fi
 
 # --- Step 2: Kill relay daemon ---
@@ -217,7 +283,7 @@ log "Cleaning state files..."
 CLEANED=0
 for f in panes.json admin-loop.pid relay-daemon.pid admin-loop.heartbeat \
          health-hash-oc.txt health-hash-cc.txt health-hash-cx.txt \
-         last-checkpoint-dispatch project-dirs.json cx-chk-id; do
+         last-checkpoint-dispatch project-dirs.json cx-chk-id brief-worker-pids; do
     if [[ -f "$STATE_DIR/$f" ]]; then
         rm -f "$STATE_DIR/$f"
         (( CLEANED++ )) || true
