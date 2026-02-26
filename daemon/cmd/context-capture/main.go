@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/norm/relay-daemon/internal/contextcapture"
 )
@@ -118,6 +119,12 @@ func runRestoreRender(args []string) {
 		checkpointSource = "unknown"
 	}
 
+	// If primary source was a task bead, supplement with most recent session brief
+	var sessionBriefSupplement string
+	if strings.HasPrefix(checkpointSource, "task") {
+		sessionBriefSupplement = fetchSessionBrief(role)
+	}
+
 	// Fetch summaries (Phase 2)
 	var stateRollup, chunkSummaries string
 	var lastSummaryOffset int64
@@ -166,6 +173,12 @@ func runRestoreRender(args []string) {
 		fmt.Println(strings.TrimSpace(checkpointBody))
 	}
 
+	// Supplement: session brief context when primary source is a task bead
+	if sessionBriefSupplement != "" {
+		fmt.Println("\n### Session Brief (supplement)")
+		fmt.Println(strings.TrimSpace(sessionBriefSupplement))
+	}
+
 	// Phase 2: Include summaries section
 	if stateRollup != "" || chunkSummaries != "" {
 		fmt.Println("\n### Session Summaries")
@@ -199,22 +212,87 @@ func fetchCheckpoint(role string) (string, string, string) {
 		return "", "", ""
 	}
 
-	listOut, err := exec.Command(bdPath, "list", "--type", "checkpoint", "--label", "role:"+role, "--limit", "1", "--json").Output()
+	// Primary: active task bead (in_progress first, then open, then blocked)
+	for _, status := range []string{"in_progress", "open", "blocked"} {
+		if id, body := queryBead(bdPath, "task", role, status); id != "" {
+			return id, body, "task"
+		}
+	}
+
+	// Fallback A: recently completed task (within 2h)
+	twoHoursAgo := time.Now().Add(-2 * time.Hour).Format(time.RFC3339)
+	if id, body := queryBeadWithExtra(bdPath, "task", role, "closed", "--closed-after", twoHoursAgo); id != "" {
+		return id, body, "task_completed"
+	}
+
+	// Fallback B (transitional): legacy recovery or checkpoint beads
+	if id, body := queryBead(bdPath, "recovery", role, ""); id != "" {
+		return id, body, "recovery"
+	}
+	if id, body := queryBead(bdPath, "checkpoint", role, ""); id != "" {
+		return id, body, "checkpoint"
+	}
+
+	// Fallback C: session brief
+	if id, body := queryBeadByLabel(bdPath, role, "kind:session_brief"); id != "" {
+		return id, body, "session_brief"
+	}
+
+	return "", "", ""
+}
+
+// queryBead queries bd for the most recent bead of the given type, role, and optional status.
+func queryBead(bdPath, beadType, role, status string) (string, string) {
+	args := []string{"list", "--type", beadType, "--label", "role:" + role, "--limit", "1", "--json"}
+	if status != "" {
+		args = append(args, "--status", status)
+	}
+	return fetchBeadBody(bdPath, args)
+}
+
+// queryBeadWithExtra is like queryBead but appends extra flag pairs (e.g. --closed-after, value).
+func queryBeadWithExtra(bdPath, beadType, role, status string, extra ...string) (string, string) {
+	args := []string{"list", "--type", beadType, "--label", "role:" + role, "--limit", "1", "--json"}
+	if status != "" {
+		args = append(args, "--status", status)
+	}
+	args = append(args, extra...)
+	return fetchBeadBody(bdPath, args)
+}
+
+// queryBeadByLabel queries bd filtering by an additional label (no type filter).
+func queryBeadByLabel(bdPath, role, label string) (string, string) {
+	args := []string{"list", "--label", "role:" + role, "--label", label, "--limit", "1", "--json"}
+	return fetchBeadBody(bdPath, args)
+}
+
+// fetchBeadBody runs a bd list query and fetches the body of the first result.
+func fetchBeadBody(bdPath string, listArgs []string) (string, string) {
+	listOut, err := exec.Command(bdPath, listArgs...).Output()
 	if err != nil {
-		return "", "", ""
+		return "", ""
 	}
 
-	checkpointID := parseCheckpointID(listOut)
-	if checkpointID == "" {
-		return "", "", ""
+	beadID := parseCheckpointID(listOut)
+	if beadID == "" {
+		return "", ""
 	}
 
-	body, _ := exec.Command(bdPath, "show", checkpointID, "--body").Output()
+	body, _ := exec.Command(bdPath, "show", beadID, "--body").Output()
 	if len(body) == 0 {
-		body, _ = exec.Command(bdPath, "show", checkpointID).Output()
+		body, _ = exec.Command(bdPath, "show", beadID).Output()
 	}
+	return beadID, strings.TrimSpace(string(body))
+}
 
-	return checkpointID, strings.TrimSpace(string(body)), "beads"
+// fetchSessionBrief returns the body of the most recent session brief for a role.
+func fetchSessionBrief(role string) string {
+	bdPath := os.ExpandEnv("$HOME/go/bin/bd")
+	if _, err := exec.LookPath(bdPath); err != nil {
+		return ""
+	}
+	_, body := queryBeadByLabel(bdPath, role, "kind:session_brief")
+	return body
 }
 
 // fetchLatestStateRollup retrieves the most recent state_rollup bead for a role.
