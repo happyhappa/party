@@ -17,7 +17,7 @@ PANES_FILE="$STATE_DIR/panes.json"
 CHK_ID_FILE="$STATE_DIR/cx-chk-id"
 PROJECT_DIRS_FILE="$STATE_DIR/project-dirs.json"
 LAST_DISPATCH_FILE="$STATE_DIR/last-checkpoint-dispatch"
-INBOX_DIR="${RELAY_INBOX_DIR:-$HOME/.local/share/relay/outbox}"
+INBOX_DIR="${RELAY_INBOX_DIR:?RELAY_INBOX_DIR not set — must be exported by bin/party}"
 GRACE_PERIOD=300
 BACKSTOP_INTERVAL="${RELAY_IDLE_BACKSTOP_INTERVAL:-7200}"
 
@@ -66,14 +66,19 @@ has_jsonl_activity() {
     (( mtime > cutoff ))
 }
 
+worktree_dir_for_role() {
+    local role="$1"
+    jq -r ".${role}_worktree // .${role} // empty" "$PROJECT_DIRS_FILE" 2>/dev/null
+}
+
 has_source_activity() {
     local role="$1" cutoff="$2"
-    local project_dir recent
+    local worktree_dir recent
 
-    project_dir=$(project_dir_for_role "$role")
-    [[ -z "$project_dir" ]] && return 1
+    worktree_dir=$(worktree_dir_for_role "$role")
+    [[ -z "$worktree_dir" ]] && return 1
 
-    recent=$(find "$project_dir" -maxdepth 3 -type f \( \
+    recent=$(find "$worktree_dir" -maxdepth 3 -type f \( \
         -name '*.ts' -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o \
         -name '*.go' -o -name '*.py' -o -name '*.rs' -o -name '*.java' -o \
         -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o \
