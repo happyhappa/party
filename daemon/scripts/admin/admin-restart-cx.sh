@@ -19,7 +19,7 @@ PANES_FILE="$STATE_DIR/panes.json"
 SHARE_DIR="${RELAY_SHARE_DIR:?RELAY_SHARE_DIR not set — must be exported by bin/party}"
 INBOX_DIR="${RELAY_INBOX_DIR:?RELAY_INBOX_DIR not set — must be exported by bin/party}"
 
-CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir $SHARE_DIR --add-dir ~/.cache --add-dir $INBOX_DIR/cx}"
+CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir $SHARE_DIR --add-dir ~/.cache --add-dir $INBOX_DIR/cx --add-dir /mnt/llm-share}"
 
 # Read CX pane ID
 CX_PANE=$(jq -r '.panes.cx // empty' "$PANES_FILE")

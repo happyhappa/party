@@ -156,7 +156,7 @@ CONFIG_FILE="$HOME/.config/relay/party.conf"
 
 OC_CMD="${RELAY_OC_CMD:-claude -c --dangerously-skip-permissions}"
 CC_CMD="${RELAY_CC_CMD:-claude --dangerously-skip-permissions}"
-CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir $RELAY_SHARE_DIR --add-dir ~/.cache --add-dir $RELAY_INBOX_DIR/cx}"
+CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir $RELAY_SHARE_DIR --add-dir ~/.cache --add-dir $RELAY_INBOX_DIR/cx --add-dir /mnt/llm-share}"
 
 log "Starting pod '$POD_NAME'..."
 

@@ -67,7 +67,7 @@ fi
 # Per-agent launch commands
 OC_CMD="${RELAY_OC_CMD:-claude ${OC_CONTINUE_FLAG} --model claude-opus-4-6 --dangerously-skip-permissions}"
 CC_CMD="${RELAY_CC_CMD:-claude --model claude-opus-4-6 --dangerously-skip-permissions}"
-CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir $RELAY_SHARE_DIR --add-dir ~/.cache --add-dir $RELAY_INBOX_DIR/cx}"
+CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir $RELAY_SHARE_DIR --add-dir ~/.cache --add-dir $RELAY_INBOX_DIR/cx --add-dir /mnt/llm-share}"
 
 # Resolve admin-loop.sh path (follows symlinks to find the real script dir)
 ADMIN_LOOP="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../daemon/scripts/admin/admin-loop.sh"
