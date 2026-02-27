@@ -15,7 +15,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${RELAY_STATE_DIR:-$HOME/llm-share/relay/state}"
-LOG_FILE="$STATE_DIR/checkpoints.log"
+LOG_FILE="$STATE_DIR/admin-health.log"
 PANES_FILE="$STATE_DIR/panes.json"
 
 if [[ ! -f "$PANES_FILE" ]]; then

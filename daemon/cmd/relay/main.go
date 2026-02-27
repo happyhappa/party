@@ -808,12 +808,6 @@ func main() {
 				}()
 			}
 
-			// Deprecated: checkpoint_content handler retained as no-op for in-flight producers. Remove in Phase C.
-			if env.To == "admin" && env.Kind == "checkpoint_content" {
-				log.Printf("deprecated: checkpoint_content message from=%s, ignoring (RFC-006)", env.From)
-				_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeCheckpointAck, env.From, "admin").WithMsgID(env.MsgID).WithStatus("ignored:deprecated"))
-				continue
-			}
 
 			// Handle broadcast to all agents (including admin if present)
 			if env.To == "all" {

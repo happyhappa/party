@@ -3,7 +3,6 @@ set -euo pipefail
 
 # relay CLI wrapper - RMF v2 format
 # Usage: relay send <oc|cc|cx|all|admin> "message"
-#        relay checkpoint <chk_id> "content" [--title "title"] [--labels "k1:v1,k2:v2"]
 
 # Determine sender from AGENT_ROLE env var (default: oc)
 from="${AGENT_ROLE:-oc}"
@@ -65,79 +64,8 @@ case "$cmd" in
     send_message "$to" "$msg" "chat"
     ;;
 
-  checkpoint)
-    # Send checkpoint content to admin (single-writer enforcement)
-    # Usage: relay checkpoint <chk_id> "content" [--title "title"] [--labels "k1:v1,k2:v2"]
-    shift
-    chk_id="${1:-}"
-    shift || true
-
-    if [[ -z "$chk_id" ]]; then
-      echo "Missing chk_id" >&2
-      exit 2
-    fi
-
-    content=""
-    title=""
-    labels=""
-
-    # Parse remaining args
-    while [[ $# -gt 0 ]]; do
-      case "$1" in
-        --title)
-          shift
-          title="${1:-}"
-          shift || true
-          ;;
-        --labels)
-          shift
-          labels="${1:-}"
-          shift || true
-          ;;
-        *)
-          if [[ -z "$content" ]]; then
-            content="$1"
-          else
-            content="$content $1"
-          fi
-          shift
-          ;;
-      esac
-    done
-
-    if [[ -z "$content" ]]; then
-      echo "Missing checkpoint content" >&2
-      exit 2
-    fi
-
-    # Build JSON payload for checkpoint_content
-    # Escape content for JSON
-    json_content=$(printf '%s' "$content" | jq -Rs .)
-    json_title=$(printf '%s' "$title" | jq -Rs .)
-
-    # Build labels object
-    if [[ -n "$labels" ]]; then
-      # Convert "k1:v1,k2:v2" to {"k1":"v1","k2":"v2"}
-      labels_json=$(echo "$labels" | tr ',' '\n' | while IFS=: read -r k v; do
-        printf '"%s":"%s",' "$k" "$v"
-      done | sed 's/,$//')
-      labels_json="{${labels_json}}"
-    else
-      labels_json="{}"
-    fi
-
-    payload=$(cat << EOF
-{"chk_id":"${chk_id}","role":"${from}","content":${json_content},"title":${json_title},"labels":${labels_json}}
-EOF
-)
-
-    send_message "admin" "$payload" "checkpoint_content"
-    echo "Checkpoint sent: chk_id=${chk_id}"
-    ;;
-
   *)
     echo "Usage: relay send <oc|cc|cx|all|admin> <message>" >&2
-    echo "       relay checkpoint <chk_id> <content> [--title <title>] [--labels <k1:v1,k2:v2>]" >&2
     exit 2
     ;;
 esac

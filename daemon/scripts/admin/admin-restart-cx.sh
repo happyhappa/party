@@ -13,8 +13,8 @@
 
 set -euo pipefail
 
-STATE_DIR="${RELAY_STATE_DIR:?RELAY_STATE_DIR not set — must be exported by bin/party}"
-LOG_FILE="$STATE_DIR/checkpoints.log"
+STATE_DIR="${RELAY_STATE_DIR:-$HOME/llm-share/relay/state}"
+LOG_FILE="$STATE_DIR/admin-health.log"
 PANES_FILE="$STATE_DIR/panes.json"
 SHARE_DIR="${RELAY_SHARE_DIR:?RELAY_SHARE_DIR not set — must be exported by bin/party}"
 INBOX_DIR="${RELAY_INBOX_DIR:?RELAY_INBOX_DIR not set — must be exported by bin/party}"
