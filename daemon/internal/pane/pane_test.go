@@ -59,8 +59,19 @@ func TestParsePaneStateCC(t *testing.T) {
 	if state.SuggestionActive {
 		t.Fatalf("expected suggestion_active=false")
 	}
-	if state.CompactedAgoS != 0 {
-		t.Fatalf("expected compacted_ago_s=0 when marker has no duration, got %d", state.CompactedAgoS)
+	if state.CompactedAgoS != -1 {
+		t.Fatalf("expected compacted_ago_s=-1 when marker has no duration, got %d", state.CompactedAgoS)
+	}
+}
+
+func TestParsePaneStateCXShortFooter(t *testing.T) {
+	captured := "› Run /review\n84% left · ? for shortcuts"
+	state := ParsePaneState("cx", captured)
+	if state.ContextPct != 84 {
+		t.Fatalf("expected context_pct=84 for short footer format, got %d", state.ContextPct)
+	}
+	if !state.SuggestionActive {
+		t.Fatalf("expected suggestion_active=true")
 	}
 }
 

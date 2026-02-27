@@ -43,6 +43,10 @@ case "$cmd" in
         echo "Missing value for --from flag" >&2
         exit 2
       fi
+      if [[ ! "$from" =~ ^[a-z_]+$ ]]; then
+        echo "Invalid --from value: must be lowercase letters/underscores only" >&2
+        exit 2
+      fi
       shift
     fi
 
