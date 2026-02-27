@@ -93,19 +93,42 @@ for ROLE in oc cc cx; do
 
     STATUS[$ROLE]="healthy"
 
-    # CX footer override — if Codex footer visible, mark healthy and skip
+    # CX: use pane-status endpoint for context detection and auto-context-cycle
     if [[ "$ROLE" == "cx" ]]; then
-        if echo "$TAIL" | grep -qE '(context left|\? for shortcuts)'; then
-            # Check for low context — auto-compact if <= 60% and idle
-            CX_CONTEXT=$(echo "$TAIL" | grep -oP '\d+(?=% context left)' | tail -1)
-            CX_IDLE=$(echo "$TAIL" | grep -qE '(context left|\? for shortcuts)' && echo "true" || echo "false")
-            if [[ -n "${CX_CONTEXT:-}" && "$CX_CONTEXT" -le 60 && "$CX_IDLE" == "true" ]]; then
+        CX_STATUS=$(relay-daemon --pane-status cx 2>/dev/null || true)
+        if [[ -n "$CX_STATUS" ]]; then
+            CX_CONTEXT=$(echo "$CX_STATUS" | jq -r '.panes.cx.context_pct // -1')
+            CX_IDLE=$(echo "$CX_STATUS" | jq -r '.panes.cx.idle // false')
+
+            if [[ "$CX_CONTEXT" -gt 0 && "$CX_CONTEXT" -le 60 && "$CX_IDLE" == "true" ]]; then
                 CX_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cx')
+
+                # Step 1: Send /compact
                 tmux send-keys -t "$CX_PANE" "/compact" Enter
-                echo "{\"timestamp\":\"$TIMESTAMP\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_compact\",\"context_pct\":$CX_CONTEXT}" >> "$LOG_FILE"
+                echo "{\"timestamp\":\"$TIMESTAMP\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_compact_start\",\"context_pct\":$CX_CONTEXT}" >> "$LOG_FILE"
+
+                # Step 2: Poll for completion (5s intervals, max 1min)
+                COMPACT_DONE=false
+                for i in $(seq 1 12); do
+                    sleep 5
+                    POLL_STATUS=$(relay-daemon --pane-status cx 2>/dev/null || true)
+                    if echo "$POLL_STATUS" | jq -e '.panes.cx.compacted' >/dev/null 2>&1; then
+                        COMPACT_DONE=true
+                        break
+                    fi
+                done
+
+                if [[ "$COMPACT_DONE" == "true" ]]; then
+                    # Step 3: Send /rec to restore context
+                    sleep 2
+                    tmux send-keys -t "$CX_PANE" "/rec" Enter
+                    echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_context_cycle_complete\"}" >> "$LOG_FILE"
+                else
+                    echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_compact_timeout\"}" >> "$LOG_FILE"
+                fi
             fi
 
-            # Store hash and continue to next role
+            # CX with pane-status detected — store hash and skip further checks
             HASH=$(echo "$TAIL" | md5sum | cut -d' ' -f1)
             echo "$HASH" > "$STATE_DIR/health-hash-cx.txt"
             continue

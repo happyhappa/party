@@ -80,5 +80,28 @@ while true; do
     # Write deadman heartbeat
     date +%s > "$STATE_DIR/admin-watchdog.heartbeat"
 
+    # Check for post-compact recovery (CC/OC only — CX handled by health check)
+    if command -v relay-daemon >/dev/null 2>&1; then
+        for role in oc cc; do
+            STATUS=$(relay-daemon --pane-status "$role" 2>/dev/null || true)
+            COMPACTED=$(echo "$STATUS" | jq -r ".panes.${role}.compacted // false" 2>/dev/null || echo "false")
+            if [[ "$COMPACTED" == "true" ]]; then
+                MARKER="$STATE_DIR/compacted-seen-$role"
+                if [[ ! -f "$MARKER" ]]; then
+                    # First time seeing compacted state — send /rec
+                    PANE_ID=$(jq -r ".panes.$role // empty" "$STATE_DIR/panes.json")
+                    if [[ -n "$PANE_ID" ]]; then
+                        tmux send-keys -t "$PANE_ID" "/rec" Enter
+                        touch "$MARKER"
+                        log "Sent /rec to $role (post-compact recovery)"
+                    fi
+                fi
+            else
+                # Not compacted — clear marker so we catch next compact
+                rm -f "$STATE_DIR/compacted-seen-$role"
+            fi
+        done
+    fi
+
     sleep "$SLEEP_INTERVAL"
 done
