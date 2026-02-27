@@ -73,6 +73,9 @@ restart_daemon() {
 
 log "Started (pid=$$, health=${HEALTH_CHECK_INTERVAL}s)"
 
+# Grace period — let relay-daemon finish starting before first health check
+sleep 5
+
 LAST_HEALTH_CHECK=0
 while true; do
     NOW=$(date +%s)
