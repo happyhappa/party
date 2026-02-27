@@ -50,6 +50,16 @@ check_daemon() {
     return 0
 }
 
+check_relay_health() {
+    local pidfile="$STATE_DIR/relay-daemon.pid"
+    [[ -f "$pidfile" ]] || return 1
+    local pid
+    pid=$(cat "$pidfile")
+    kill -0 "$pid" 2>/dev/null || return 1
+    RELAY_STATE_DIR="$STATE_DIR" relay-daemon --pane-status >/dev/null 2>&1 || return 1
+    return 0
+}
+
 restart_daemon() {
     log "Attempting relay-daemon restart..."
     setsid relay-daemon >> "$LOG_DIR/relay.log" 2>&1 &
@@ -66,6 +76,18 @@ log "Started (pid=$$, health=${HEALTH_CHECK_INTERVAL}s)"
 LAST_HEALTH_CHECK=0
 while true; do
     NOW=$(date +%s)
+
+    # Relay health precondition
+    if ! check_relay_health; then
+        log "WARNING: relay unhealthy, attempting restart"
+        restart_daemon
+        sleep 5
+        if ! check_relay_health; then
+            log "ERROR: relay still unhealthy after restart — skipping cycle"
+            sleep "$SLEEP_INTERVAL"
+            continue
+        fi
+    fi
 
     # Health check + daemon watchdog
     if (( NOW - LAST_HEALTH_CHECK >= HEALTH_CHECK_INTERVAL )); then
@@ -89,15 +111,12 @@ while true; do
             if [[ "$COMPACTED" == "true" ]]; then
                 MARKER="$STATE_DIR/compacted-seen-$role"
                 if [[ ! -f "$MARKER" ]]; then
-                    # First time seeing compacted state — send /rec
-                    PANE_ID=$(jq -r ".panes.$role // empty" "$STATE_DIR/panes.json")
-                    if [[ -n "$PANE_ID" ]]; then
-                        if tmux send-keys -t "$PANE_ID" "/rec" Enter 2>/dev/null; then
-                            touch "$MARKER"
-                            log "Sent /rec to $role (post-compact recovery)"
-                        else
-                            log "WARNING: failed to send /rec to $role (pane $PANE_ID)"
-                        fi
+                    # First time seeing compacted state — send /rec via relay
+                    if relay send --from admin "$role" "/rec"; then
+                        touch "$MARKER"
+                        log "Sent /rec to $role (post-compact recovery)"
+                    else
+                        log "WARNING: failed to send /rec to $role"
                     fi
                 fi
             else

@@ -88,8 +88,8 @@ for ROLE in oc cc cx; do
         continue
     fi
 
-    TAIL=$(tmux capture-pane -t "$PANE_ID" -p -S -20 2>/dev/null || echo "CAPTURE_FAILED")
-    CMD=$(tmux display-message -t "$PANE_ID" -p '#{pane_current_command}' 2>/dev/null || echo "UNKNOWN")
+    PANE_STATUS=$(RELAY_STATE_DIR="$STATE_DIR" relay-daemon --pane-status "$ROLE" 2>/dev/null | jq -r ".panes.$ROLE" 2>/dev/null || echo "CAPTURE_FAILED")
+    CMD=$(echo "$PANE_STATUS" | jq -r '.process_name // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
 
     STATUS[$ROLE]="healthy"
 
@@ -103,10 +103,8 @@ for ROLE in oc cc cx; do
             CX_COMPACTED=$(echo "$CX_STATUS" | jq -r '.panes.cx.compacted // false')
 
             if [[ "$CX_CONTEXT" -gt 0 && "$CX_CONTEXT" -le 60 && "$CX_IDLE" == "true" && "$CX_COMPACTED" != "true" ]]; then
-                CX_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cx')
-
                 # Step 1: Send /compact
-                tmux send-keys -t "$CX_PANE" "/compact" Enter
+                relay send --from admin cx "/compact"
                 echo "{\"timestamp\":\"$TIMESTAMP\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_compact_start\",\"context_pct\":$CX_CONTEXT}" >> "$LOG_FILE"
 
                 # Step 2: Poll for fresh compaction (5s intervals, max 1min)
@@ -125,7 +123,7 @@ for ROLE in oc cc cx; do
                 if [[ "$COMPACT_DONE" == "true" ]]; then
                     # Step 3: Send /rec to restore context
                     sleep 2
-                    tmux send-keys -t "$CX_PANE" "/rec" Enter
+                    relay send --from admin cx "/rec"
                     echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_context_cycle_complete\"}" >> "$LOG_FILE"
                 else
                     echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_compact_timeout\"}" >> "$LOG_FILE"
@@ -133,7 +131,7 @@ for ROLE in oc cc cx; do
             fi
 
             # CX with pane-status detected — store hash and skip further checks
-            HASH=$(echo "$TAIL" | md5sum | cut -d' ' -f1)
+            HASH=$(echo "$PANE_STATUS" | md5sum | cut -d' ' -f1)
             echo "$HASH" > "$STATE_DIR/health-hash-cx.txt"
             continue
         fi
@@ -157,7 +155,7 @@ for ROLE in oc cc cx; do
     # Error pattern scan (3+ occurrences of same pattern = problem)
     ERROR_FOUND=false
     for pattern in error panic FATAL killed Traceback SIGTERM SIGKILL OOM; do
-        COUNT=$(echo "$TAIL" | grep -ci "$pattern" 2>/dev/null || echo 0)
+        COUNT=$(echo "$PANE_STATUS" | grep -ci "$pattern" 2>/dev/null || echo 0)
         if [[ "$COUNT" -ge 3 ]]; then
             ERROR_FOUND=true
             STATUS[$ROLE]="unhealthy"
@@ -167,13 +165,13 @@ for ROLE in oc cc cx; do
 
     # Bare prompt detection
     BARE_PROMPT=false
-    LAST_LINE=$(echo "$TAIL" | grep -v '^$' | tail -1)
+    LAST_LINE=$(echo "$PANE_STATUS" | grep -v '^$' | tail -1)
     if echo "$LAST_LINE" | grep -qE '[$%>]' && echo "$CMD" | grep -qE '^(bash|zsh|sh|fish)$'; then
         BARE_PROMPT=true
     fi
 
     # Stale output detection
-    HASH=$(echo "$TAIL" | md5sum | cut -d' ' -f1)
+    HASH=$(echo "$PANE_STATUS" | md5sum | cut -d' ' -f1)
     PREV_HASH=$(cat "$STATE_DIR/health-hash-${ROLE}.txt" 2>/dev/null || echo "none")
     echo "$HASH" > "$STATE_DIR/health-hash-${ROLE}.txt"
 
