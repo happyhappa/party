@@ -217,16 +217,25 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 
 		ready, tail, err := injector.IsPaneReady(paneID, pq.target)
 		if err != nil || !ready {
-			if tail == "" && err != nil {
-				tail = err.Error()
+			// CX suggestion detected — dismiss and inject immediately
+			if pq.target == "cx" && codexFooterVisible(tail) {
+				_, _ = injector.tmux.Run("send-keys", "-t", pq.paneID, " ")
+				time.Sleep(200 * time.Millisecond)
+				_, _ = injector.tmux.Run("send-keys", "-t", pq.paneID, "BSpace")
+				time.Sleep(200 * time.Millisecond)
+				// Fall through to inject below instead of requeueing
+			} else {
+				if tail == "" && err != nil {
+					tail = err.Error()
+				}
+				injector.logEvent(logpkg.EventTypeBlocked, item.env.From, pq.target, item.env.MsgID, truncateForLog(tail))
+				item.backoff = nextBackoff(item.backoff)
+				pq.requeueFront(item)
+				if !sleepOrDone(ctx, item.backoff) {
+					return
+				}
+				continue
 			}
-			injector.logEvent(logpkg.EventTypeBlocked, item.env.From, pq.target, item.env.MsgID, truncateForLog(tail))
-			item.backoff = nextBackoff(item.backoff)
-			pq.requeueFront(item)
-			if !sleepOrDone(ctx, item.backoff) {
-				return
-			}
-			continue
 		}
 
 		// Wrap payload in relay-message XML tags for agent protocol.
@@ -292,12 +301,8 @@ func (i *Injector) IsPaneReady(paneID, target string) (bool, string, error) {
 		if strings.HasPrefix(strings.TrimSpace(last), prefix) {
 			// Codex shows › for suggestions too. When a suggestion is
 			// active the footer line ("% left ·") is visible — treat
-			// that as NOT ready so we don't paste over the suggestion.
+			// that as NOT ready. The run() loop handles dismissal.
 			if prefix == "›" && target == "cx" && codexFooterVisible(out) {
-				// Dismiss suggestion: space accepts/clears it, backspace removes the space
-				_, _ = i.tmux.Run("send-keys", "-t", paneID, " ")
-				time.Sleep(100 * time.Millisecond)
-				_, _ = i.tmux.Run("send-keys", "-t", paneID, "BSpace")
 				return false, strings.TrimSpace(out), nil
 			}
 			return true, strings.TrimSpace(out), nil
