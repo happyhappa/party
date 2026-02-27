@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	contextPctRe    = regexp.MustCompile(`(\d+)% context left`)
+	contextPctRe    = regexp.MustCompile(`(\d+)%\s*(?:context\s+)?left`)
 	durationAgoRe   = regexp.MustCompile(`(?i)(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s+ago`)
 	cxCompactRe     = regexp.MustCompile(`(?i)context compacted(?:[^0-9]+(\d+\s*(?:seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s+ago))?`)
 	claudeCompactRe = regexp.MustCompile(`(?i)✻\s*conversation compacted(?:[^0-9]+(\d+\s*(?:seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s+ago))?`)
@@ -86,11 +86,11 @@ func extractCompactedAgoSeconds(capturedText string, marker *regexp.Regexp) int 
 	last := matches[len(matches)-1]
 	ago := durationAgoRe.FindStringSubmatch(last)
 	if len(ago) < 3 {
-		return 0
+		return -1
 	}
 	value, err := strconv.Atoi(ago[1])
 	if err != nil {
-		return 0
+		return -1
 	}
 	unit := strings.ToLower(ago[2])
 	switch {

@@ -90,12 +90,13 @@ for ROLE in oc cc cx; do
 
     PANE_STATUS=$(RELAY_STATE_DIR="$STATE_DIR" relay-daemon --pane-status "$ROLE" 2>/dev/null | jq -r ".panes.$ROLE" 2>/dev/null || echo "CAPTURE_FAILED")
     CMD=$(echo "$PANE_STATUS" | jq -r '.process_name // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
+    TAIL=$(tmux capture-pane -t "$PANE_ID" -p -S -20 2>/dev/null || echo "CAPTURE_FAILED")
 
     STATUS[$ROLE]="healthy"
 
     # CX: use pane-status endpoint for context detection and auto-context-cycle
     if [[ "$ROLE" == "cx" ]]; then
-        CX_STATUS=$(relay-daemon --pane-status cx 2>/dev/null || true)
+        CX_STATUS=$(RELAY_STATE_DIR="$STATE_DIR" relay-daemon --pane-status cx 2>/dev/null || true)
         if [[ -n "$CX_STATUS" ]]; then
             CX_CONTEXT=$(echo "$CX_STATUS" | jq -r '.panes.cx.context_pct // -1')
             CX_IDLE=$(echo "$CX_STATUS" | jq -r '.panes.cx.idle // false')
@@ -104,7 +105,7 @@ for ROLE in oc cc cx; do
 
             if [[ "$CX_CONTEXT" -gt 0 && "$CX_CONTEXT" -le 60 && "$CX_IDLE" == "true" && "$CX_COMPACTED" != "true" ]]; then
                 # Step 1: Send /compact
-                relay send --from admin cx "/compact"
+                relay send --from admin cx "/compact" || { log_anomaly "cx" "relay_send_failed" "" "/compact"; }
                 echo "{\"timestamp\":\"$TIMESTAMP\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_compact_start\",\"context_pct\":$CX_CONTEXT}" >> "$LOG_FILE"
 
                 # Step 2: Poll for fresh compaction (5s intervals, max 1min)
@@ -123,15 +124,23 @@ for ROLE in oc cc cx; do
                 if [[ "$COMPACT_DONE" == "true" ]]; then
                     # Step 3: Send /rec to restore context
                     sleep 2
-                    relay send --from admin cx "/rec"
+                    relay send --from admin cx "/rec" || { log_anomaly "cx" "relay_send_failed" "" "/rec"; }
                     echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_context_cycle_complete\"}" >> "$LOG_FILE"
                 else
                     echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_compact_timeout\"}" >> "$LOG_FILE"
                 fi
             fi
 
+            # Check CX process health even when pane-status succeeds
+            CX_PROC=$(echo "$CX_STATUS" | jq -r '.panes.cx.process_name // "UNKNOWN"')
+            if ! echo "$CX_PROC" | grep -qE '^(codex|node)$'; then
+                STATUS[cx]="dead"
+                log_anomaly "cx" "process_dead" "$CX_PROC" "pane-status ok but process not codex/node"
+                "$SCRIPT_DIR/admin-restart-cx.sh" || true
+            fi
+
             # CX with pane-status detected — store hash and skip further checks
-            HASH=$(echo "$PANE_STATUS" | md5sum | cut -d' ' -f1)
+            HASH=$(echo "$TAIL" | md5sum | cut -d' ' -f1)
             echo "$HASH" > "$STATE_DIR/health-hash-cx.txt"
             continue
         fi
@@ -155,7 +164,7 @@ for ROLE in oc cc cx; do
     # Error pattern scan (3+ occurrences of same pattern = problem)
     ERROR_FOUND=false
     for pattern in error panic FATAL killed Traceback SIGTERM SIGKILL OOM; do
-        COUNT=$(echo "$PANE_STATUS" | grep -ci "$pattern" 2>/dev/null || echo 0)
+        COUNT=$(echo "$TAIL" | grep -ci "$pattern" 2>/dev/null || echo 0)
         if [[ "$COUNT" -ge 3 ]]; then
             ERROR_FOUND=true
             STATUS[$ROLE]="unhealthy"
@@ -165,13 +174,13 @@ for ROLE in oc cc cx; do
 
     # Bare prompt detection
     BARE_PROMPT=false
-    LAST_LINE=$(echo "$PANE_STATUS" | grep -v '^$' | tail -1)
+    LAST_LINE=$(echo "$TAIL" | grep -v '^$' | tail -1)
     if echo "$LAST_LINE" | grep -qE '[$%>]' && echo "$CMD" | grep -qE '^(bash|zsh|sh|fish)$'; then
         BARE_PROMPT=true
     fi
 
     # Stale output detection
-    HASH=$(echo "$PANE_STATUS" | md5sum | cut -d' ' -f1)
+    HASH=$(echo "$TAIL" | md5sum | cut -d' ' -f1)
     PREV_HASH=$(cat "$STATE_DIR/health-hash-${ROLE}.txt" 2>/dev/null || echo "none")
     echo "$HASH" > "$STATE_DIR/health-hash-${ROLE}.txt"
 

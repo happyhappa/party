@@ -56,7 +56,7 @@ check_relay_health() {
     local pid
     pid=$(cat "$pidfile")
     kill -0 "$pid" 2>/dev/null || return 1
-    RELAY_STATE_DIR="$STATE_DIR" relay-daemon --pane-status >/dev/null 2>&1 || return 1
+    RELAY_STATE_DIR="$STATE_DIR" relay-daemon --pane-status oc >/dev/null 2>&1 || return 1
     return 0
 }
 
@@ -80,10 +80,19 @@ while true; do
     # Relay health precondition
     if ! check_relay_health; then
         log "WARNING: relay unhealthy, attempting restart"
-        restart_daemon
-        sleep 5
-        if ! check_relay_health; then
-            log "ERROR: relay still unhealthy after restart — skipping cycle"
+        RELAY_RECOVERED=false
+        for attempt in 1 2 3; do
+            restart_daemon
+            sleep 10
+            if check_relay_health; then
+                RELAY_RECOVERED=true
+                break
+            fi
+            log "WARNING: relay restart attempt $attempt failed"
+        done
+        if [[ "$RELAY_RECOVERED" != "true" ]]; then
+            log "ERROR: relay unrecoverable after 3 attempts — alerting user"
+            echo "[ALERT] relay-daemon unrecoverable at $(date)" >> "$STATE_DIR/relay-alerts.log"
             sleep "$SLEEP_INTERVAL"
             continue
         fi
@@ -119,8 +128,8 @@ while true; do
                         log "WARNING: failed to send /rec to $role"
                     fi
                 fi
-            else
-                # Not compacted — clear marker so we catch next compact
+            elif [[ "$COMPACTED" == "false" ]]; then
+                # Explicitly not compacted — clear marker so we catch next compact
                 rm -f "$STATE_DIR/compacted-seen-$role"
             fi
         done

@@ -220,9 +220,9 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 		if err != nil || !ready {
 			// CX suggestion detected — dismiss and inject immediately
 			if pq.target == "cx" && pane.CodexFooterVisible(tail) {
-				_, _ = injector.tmux.Run("send-keys", "-t", pq.paneID, " ")
+				_, _ = injector.tmux.Run("send-keys", "-t", paneID, " ")
 				time.Sleep(200 * time.Millisecond)
-				_, _ = injector.tmux.Run("send-keys", "-t", pq.paneID, "BSpace")
+				_, _ = injector.tmux.Run("send-keys", "-t", paneID, "BSpace")
 				time.Sleep(200 * time.Millisecond)
 				// Fall through to inject below instead of requeueing
 			} else {
