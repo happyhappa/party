@@ -904,7 +904,11 @@ func runPaneStatus(args []string) error {
 		if err != nil {
 			return fmt.Errorf("capture pane for %s (%s): %w", roleFilter, paneID, err)
 		}
-		output.Panes[roleFilter] = pane.ParsePaneState(roleFilter, captured)
+		st := pane.ParsePaneState(roleFilter, captured)
+		if procName, pErr := mux.Run("display-message", "-t", paneID, "-p", "#{pane_current_command}"); pErr == nil {
+			st.ProcessName = strings.TrimSpace(procName)
+		}
+		output.Panes[roleFilter] = st
 	} else {
 		roles := make([]string, 0, len(targets))
 		for role := range targets {
@@ -922,7 +926,11 @@ func runPaneStatus(args []string) error {
 			if err != nil {
 				return fmt.Errorf("capture pane for %s (%s): %w", role, paneID, err)
 			}
-			output.Panes[role] = pane.ParsePaneState(role, captured)
+			st := pane.ParsePaneState(role, captured)
+			if procName, pErr := mux.Run("display-message", "-t", paneID, "-p", "#{pane_current_command}"); pErr == nil {
+				st.ProcessName = strings.TrimSpace(procName)
+			}
+			output.Panes[role] = st
 		}
 	}
 

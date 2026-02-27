@@ -15,12 +15,13 @@ var (
 
 // State is parsed pane state data emitted by relay-daemon --pane-status.
 type State struct {
-	Ready            bool `json:"ready"`
-	ContextPct       int  `json:"context_pct"`
-	SuggestionActive bool `json:"suggestion_active"`
-	Compacted        bool `json:"compacted"`
-	CompactedAgoS    int  `json:"compacted_ago_s"`
-	Idle             bool `json:"idle"`
+	Ready            bool   `json:"ready"`
+	ContextPct       int    `json:"context_pct"`
+	SuggestionActive bool   `json:"suggestion_active"`
+	Compacted        bool   `json:"compacted"`
+	CompactedAgoS    int    `json:"compacted_ago_s"`
+	Idle             bool   `json:"idle"`
+	ProcessName      string `json:"process_name,omitempty"`
 }
 
 // ParsePaneState parses pane capture text into normalized pane state.

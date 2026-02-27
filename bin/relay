@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # relay CLI wrapper - RMF v2 format
-# Usage: relay send <oc|cc|cx|all|admin> "message"
+# Usage: relay send [--from <role>] <oc|cc|cx|all|admin> "message"
 
 # Determine sender from AGENT_ROLE env var (default: oc)
 from="${AGENT_ROLE:-oc}"
@@ -34,6 +34,18 @@ cmd="${1:-}"
 case "$cmd" in
   send)
     shift
+
+    # Parse optional --from flag
+    if [[ "${1:-}" == "--from" ]]; then
+      shift
+      from="${1:-}"
+      if [[ -z "$from" ]]; then
+        echo "Missing value for --from flag" >&2
+        exit 2
+      fi
+      shift
+    fi
+
     to="${1:-}"
     shift || true
 
@@ -65,7 +77,7 @@ case "$cmd" in
     ;;
 
   *)
-    echo "Usage: relay send <oc|cc|cx|all|admin> <message>" >&2
+    echo "Usage: relay send [--from <role>] <oc|cc|cx|all|admin> <message>" >&2
     exit 2
     ;;
 esac
