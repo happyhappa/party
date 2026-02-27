@@ -359,7 +359,7 @@ func (m *taskBeadManager) classifyAsync(req *classifierRequest) (string, error) 
 	ctx, cancel := context.WithTimeout(context.Background(), classifierPromptTimeout)
 	defer cancel()
 	prompt := "Classify this response to a task assignment. Default to in_progress if ambiguous. Reply with exactly one word: in_progress, blocked, or completed."
-	cmd := exec.CommandContext(ctx, "codex", "exec", "--full-auto", prompt)
+	cmd := exec.CommandContext(ctx, "codex", "exec", "--skip-git-repo-check", "--full-auto", prompt)
 	cmd.Stdin = strings.NewReader(req.Context)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
