@@ -46,8 +46,9 @@ func ParsePaneState(target, capturedText string) State {
 			out.CompactedAgoS = extractCompactedAgoSeconds(capturedText, cxCompactRe)
 		}
 	default:
-		out.Ready = strings.HasPrefix(trimmedLast, "❯")
-		out.Idle = strings.HasPrefix(trimmedLast, "❯")
+		prompt := hasClaudePrompt(capturedText)
+		out.Ready = prompt
+		out.Idle = prompt
 		if strings.Contains(strings.ToLower(capturedText), "conversation compacted") {
 			out.Compacted = true
 			out.CompactedAgoS = extractCompactedAgoSeconds(capturedText, claudeCompactRe)
@@ -109,6 +110,21 @@ func hasSuggestionLine(text string) bool {
 		if strings.HasPrefix(strings.TrimSpace(line), "›") {
 			return true
 		}
+	}
+	return false
+}
+
+// hasClaudePrompt scans backwards through captured text looking for the ❯
+// prompt, skipping the Claude Code status bar (⏵⏵) and separator lines (───)
+// that sit below the prompt in the terminal.
+func hasClaudePrompt(capturedText string) bool {
+	lines := strings.Split(capturedText, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, "─") || strings.HasPrefix(trimmed, "⏵") {
+			continue
+		}
+		return strings.HasPrefix(trimmed, "❯")
 	}
 	return false
 }

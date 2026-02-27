@@ -63,3 +63,38 @@ func TestParsePaneStateCC(t *testing.T) {
 		t.Fatalf("expected compacted_ago_s=0 when marker has no duration, got %d", state.CompactedAgoS)
 	}
 }
+
+func TestParsePaneStateCCWithStatusBar(t *testing.T) {
+	// Claude Code has a status bar below the prompt — parser must skip it
+	captured := "some output\n❯ \n──────────────────────────────────\n  ⏵⏵ bypass permissions on · 1 bash"
+	state := ParsePaneState("cc", captured)
+	if !state.Ready {
+		t.Fatalf("expected ready=true with status bar below prompt, got false")
+	}
+	if !state.Idle {
+		t.Fatalf("expected idle=true with status bar below prompt, got false")
+	}
+}
+
+func TestParsePaneStateCCBusy(t *testing.T) {
+	// When Claude is actively working, no ❯ prompt visible
+	captured := "● Reading file.go\n\n* Thinking… (thought for 5s)\n──────────────────────────────────\n  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt"
+	state := ParsePaneState("oc", captured)
+	if state.Ready {
+		t.Fatalf("expected ready=false when Claude is busy, got true")
+	}
+	if state.Idle {
+		t.Fatalf("expected idle=false when Claude is busy, got false")
+	}
+}
+
+func TestParsePaneStateCCCompactedWithStatusBar(t *testing.T) {
+	captured := "work\n✻ Conversation compacted\n❯\n──────────────────────────────────\n  ⏵⏵ bypass permissions on · 1 bash"
+	state := ParsePaneState("cc", captured)
+	if !state.Ready {
+		t.Fatalf("expected ready=true")
+	}
+	if !state.Compacted {
+		t.Fatalf("expected compacted=true")
+	}
+}
