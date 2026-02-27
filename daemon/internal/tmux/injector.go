@@ -279,8 +279,10 @@ func (i *Injector) IsPaneReady(paneID, target string) (bool, string, error) {
 			// active the footer line ("% left ·") is visible — treat
 			// that as NOT ready so we don't paste over the suggestion.
 			if prefix == "›" && target == "cx" && codexFooterVisible(out) {
-				// Dismiss the suggestion so next retry finds clean prompt
-				_, _ = i.tmux.Run("send-keys", "-t", paneID, "Escape")
+				// Dismiss suggestion: space accepts/clears it, backspace removes the space
+				_, _ = i.tmux.Run("send-keys", "-t", paneID, " ")
+				time.Sleep(100 * time.Millisecond)
+				_, _ = i.tmux.Run("send-keys", "-t", paneID, "BSpace")
 				return false, strings.TrimSpace(out), nil
 			}
 			return true, strings.TrimSpace(out), nil
