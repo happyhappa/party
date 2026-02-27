@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,6 +20,7 @@ import (
 	cfgpkg "github.com/norm/relay-daemon/internal/config"
 	inbox "github.com/norm/relay-daemon/internal/inbox"
 	logpkg "github.com/norm/relay-daemon/internal/log"
+	"github.com/norm/relay-daemon/internal/pane"
 	"github.com/norm/relay-daemon/internal/state"
 	"github.com/norm/relay-daemon/internal/supervisor"
 	tmuxpkg "github.com/norm/relay-daemon/internal/tmux"
@@ -31,7 +33,13 @@ const (
 	classifierStatusBlocked   = "blocked"
 	classifierStatusCompleted = "completed"
 	classifierStatusStale     = "stale"
+	paneStatusSchemaVersion   = 1
 )
+
+type paneStatusOutput struct {
+	SchemaVersion int                   `json:"schema_version"`
+	Panes         map[string]pane.State `json:"panes"`
+}
 
 // acquireLockfile takes an exclusive non-blocking flock on the given path.
 // Returns the open file (caller must keep it open) or an error if already locked.
@@ -511,6 +519,14 @@ func writeTombstone(stateDir, reason, detail string, pid int, startedAt time.Tim
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--pane-status" {
+		if err := runPaneStatus(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	cfg, err := cfgpkg.Load()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
@@ -813,4 +829,77 @@ func main() {
 			}
 		}
 	}
+}
+
+func runPaneStatus(args []string) error {
+	if len(args) > 1 {
+		return fmt.Errorf("usage: relay-daemon --pane-status [oc|cc|cx]")
+	}
+	roleFilter := ""
+	if len(args) == 1 {
+		roleFilter = strings.ToLower(strings.TrimSpace(args[0]))
+		if !isTaskAgent(roleFilter) && roleFilter != "oc" {
+			return fmt.Errorf("invalid role %q: expected oc|cc|cx", roleFilter)
+		}
+	}
+
+	stateDir := strings.TrimSpace(os.Getenv("RELAY_STATE_DIR"))
+	if stateDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolve home dir: %w", err)
+		}
+		stateDir = filepath.Join(home, ".relay", "state")
+	}
+
+	paneMapPath := strings.TrimSpace(os.Getenv("RELAY_PANE_MAP"))
+	if paneMapPath == "" {
+		paneMapPath = filepath.Join(stateDir, "panes.json")
+	}
+
+	targets, err := cfgpkg.ReadPaneMap(paneMapPath)
+	if err != nil {
+		return fmt.Errorf("read pane map %s: %w", paneMapPath, err)
+	}
+
+	mux := tmuxpkg.New()
+	output := paneStatusOutput{
+		SchemaVersion: paneStatusSchemaVersion,
+		Panes:         map[string]pane.State{},
+	}
+
+	if roleFilter != "" {
+		paneID, ok := targets[roleFilter]
+		if !ok || strings.TrimSpace(paneID) == "" {
+			return fmt.Errorf("pane map does not contain role %q", roleFilter)
+		}
+		captured, err := mux.Run("capture-pane", "-t", paneID, "-p", "-S", "-80")
+		if err != nil {
+			return fmt.Errorf("capture pane for %s (%s): %w", roleFilter, paneID, err)
+		}
+		output.Panes[roleFilter] = pane.ParsePaneState(roleFilter, captured)
+	} else {
+		roles := make([]string, 0, len(targets))
+		for role := range targets {
+			if role == "oc" || role == "cc" || role == "cx" {
+				roles = append(roles, role)
+			}
+		}
+		sort.Strings(roles)
+		for _, role := range roles {
+			paneID := strings.TrimSpace(targets[role])
+			if paneID == "" {
+				continue
+			}
+			captured, err := mux.Run("capture-pane", "-t", paneID, "-p", "-S", "-80")
+			if err != nil {
+				return fmt.Errorf("capture pane for %s (%s): %w", role, paneID, err)
+			}
+			output.Panes[role] = pane.ParsePaneState(role, captured)
+		}
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(output)
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	logpkg "github.com/norm/relay-daemon/internal/log"
+	"github.com/norm/relay-daemon/internal/pane"
 	"github.com/norm/relay-daemon/pkg/envelope"
 )
 
@@ -278,33 +279,12 @@ func (i *Injector) IsPaneReady(paneID, target string) (bool, string, error) {
 		return false, "", nil
 	}
 
-	out, err := i.tmux.Run("capture-pane", "-t", paneID, "-p", "-S", "-5")
+	out, err := i.tmux.Run("capture-pane", "-t", paneID, "-p", "-S", "-40")
 	if err != nil {
 		return false, "", err
 	}
-
-	last := lastNonEmptyLine(out)
-	if last == "" {
-		return false, strings.TrimSpace(out), nil
-	}
-
-	for _, prefix := range []string{"❯", "›", "⏵", "?", "$", "%", ">"} {
-		if strings.HasPrefix(strings.TrimSpace(last), prefix) {
-			return true, strings.TrimSpace(out), nil
-		}
-	}
-	return false, strings.TrimSpace(out), nil
-}
-
-func lastNonEmptyLine(out string) string {
-	lines := strings.Split(out, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line != "" {
-			return line
-		}
-	}
-	return ""
+	parsed := pane.ParsePaneState(target, out)
+	return parsed.Ready, strings.TrimSpace(out), nil
 }
 
 func nextBackoff(current time.Duration) time.Duration {
