@@ -275,6 +275,12 @@ func (i *Injector) IsPaneReady(paneID, target string) (bool, string, error) {
 
 	for _, prefix := range []string{"❯", "›", "⏵", "?", "$", "%", ">"} {
 		if strings.HasPrefix(strings.TrimSpace(last), prefix) {
+			// Codex shows › for suggestions too. When a suggestion is
+			// active the footer line ("% left ·") is visible — treat
+			// that as NOT ready so we don't paste over the suggestion.
+			if prefix == "›" && target == "cx" && codexFooterVisible(out) {
+				return false, strings.TrimSpace(out), nil
+			}
 			return true, strings.TrimSpace(out), nil
 		}
 	}
@@ -290,6 +296,19 @@ func lastNonEmptyLine(out string) string {
 		}
 	}
 	return ""
+}
+
+// codexFooterVisible returns true if the captured pane text contains
+// the Codex status footer, indicating a suggestion prompt is active
+// rather than a genuine input prompt.
+func codexFooterVisible(paneText string) bool {
+	for _, line := range strings.Split(paneText, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "% left ·") || strings.Contains(trimmed, "% context left") {
+			return true
+		}
+	}
+	return false
 }
 
 func nextBackoff(current time.Duration) time.Duration {
