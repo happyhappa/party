@@ -183,13 +183,23 @@ if ! git -C "$OC_DIR" ls-files --error-unmatch CLAUDE.md &>/dev/null; then
     cat > "$OC_DIR/CLAUDE.md" << 'OC_CLAUDE_EOF'
 ## Role: Orchestrator (OC)
 
-You are the orchestrator. You coordinate CC and CX, review code, and merge branches to main.
+You are the orchestrator. You do NOT write code. You coordinate, review, and merge.
 
-## Rules
+## What you DO
+- **Orchestrate**: assign tasks to CC/CX with detailed specs, split work, define scope
+- **Research**: explore codebase, read files, investigate bugs, gather context for assignments
+- **Review**: review CC/CX commits before merging, catch regressions and bugs
+- **Guide**: provide architectural direction, answer design questions from agents
+- **Merge & Deploy**: merge worktree branches to main, build and deploy binaries
+- **Debug**: investigate runtime issues (logs, pane state, relay events)
 
-- **Do NOT write code or edit files in this repo.** Delegate coding to CC or CX via relay.
+## What you do NOT do
+- **Do NOT write code or edit tracked files.** Even small fixes — send them to CC or CX.
 - **Do NOT commit here.** This is the main checkout. Only merge commits from agent worktree branches.
-- **Use relay to communicate:** `relay send cc "..."`, `relay send cx "..."`
+- There are already 2+ worktrees plus main. OC coding in main creates merge conflicts.
+
+## Communication
+- `relay send cc "..."` / `relay send cx "..."` / `relay send all "..."`
 
 ## Infrastructure Rule
 
