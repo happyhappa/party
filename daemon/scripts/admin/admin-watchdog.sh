@@ -85,15 +85,19 @@ while true; do
         for role in oc cc; do
             STATUS=$(relay-daemon --pane-status "$role" 2>/dev/null || true)
             COMPACTED=$(echo "$STATUS" | jq -r ".panes.${role}.compacted // false" 2>/dev/null || echo "false")
+            COMPACTED=${COMPACTED:-false}
             if [[ "$COMPACTED" == "true" ]]; then
                 MARKER="$STATE_DIR/compacted-seen-$role"
                 if [[ ! -f "$MARKER" ]]; then
                     # First time seeing compacted state — send /rec
                     PANE_ID=$(jq -r ".panes.$role // empty" "$STATE_DIR/panes.json")
                     if [[ -n "$PANE_ID" ]]; then
-                        tmux send-keys -t "$PANE_ID" "/rec" Enter
-                        touch "$MARKER"
-                        log "Sent /rec to $role (post-compact recovery)"
+                        if tmux send-keys -t "$PANE_ID" "/rec" Enter 2>/dev/null; then
+                            touch "$MARKER"
+                            log "Sent /rec to $role (post-compact recovery)"
+                        else
+                            log "WARNING: failed to send /rec to $role (pane $PANE_ID)"
+                        fi
                     fi
                 fi
             else

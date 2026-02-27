@@ -100,19 +100,23 @@ for ROLE in oc cc cx; do
             CX_CONTEXT=$(echo "$CX_STATUS" | jq -r '.panes.cx.context_pct // -1')
             CX_IDLE=$(echo "$CX_STATUS" | jq -r '.panes.cx.idle // false')
 
-            if [[ "$CX_CONTEXT" -gt 0 && "$CX_CONTEXT" -le 60 && "$CX_IDLE" == "true" ]]; then
+            CX_COMPACTED=$(echo "$CX_STATUS" | jq -r '.panes.cx.compacted // false')
+
+            if [[ "$CX_CONTEXT" -gt 0 && "$CX_CONTEXT" -le 60 && "$CX_IDLE" == "true" && "$CX_COMPACTED" != "true" ]]; then
                 CX_PANE=$(echo "$PANES_JSON" | jq -r '.panes.cx')
 
                 # Step 1: Send /compact
                 tmux send-keys -t "$CX_PANE" "/compact" Enter
                 echo "{\"timestamp\":\"$TIMESTAMP\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_compact_start\",\"context_pct\":$CX_CONTEXT}" >> "$LOG_FILE"
 
-                # Step 2: Poll for completion (5s intervals, max 1min)
+                # Step 2: Poll for fresh compaction (5s intervals, max 1min)
                 COMPACT_DONE=false
                 for i in $(seq 1 12); do
                     sleep 5
                     POLL_STATUS=$(relay-daemon --pane-status cx 2>/dev/null || true)
-                    if echo "$POLL_STATUS" | jq -e '.panes.cx.compacted' >/dev/null 2>&1; then
+                    POLL_COMPACTED=$(echo "$POLL_STATUS" | jq -r '.panes.cx.compacted // false')
+                    POLL_AGO=$(echo "$POLL_STATUS" | jq -r '.panes.cx.compacted_ago_s // -1')
+                    if [[ "$POLL_COMPACTED" == "true" && "$POLL_AGO" -ge 0 && "$POLL_AGO" -lt 120 ]]; then
                         COMPACT_DONE=true
                         break
                     fi

@@ -38,7 +38,7 @@ func ParsePaneState(target, capturedText string) State {
 	case "cx":
 		footer := CodexFooterVisible(capturedText)
 		out.ContextPct = extractContextPct(capturedText)
-		out.SuggestionActive = strings.Contains(capturedText, "›") && footer
+		out.SuggestionActive = hasSuggestionLine(capturedText) && footer
 		out.Ready = strings.HasPrefix(trimmedLast, "›") && !footer
 		out.Idle = footer
 		if strings.Contains(strings.ToLower(capturedText), "context compacted") {
@@ -100,6 +100,17 @@ func extractCompactedAgoSeconds(capturedText string, marker *regexp.Regexp) int 
 	default:
 		return value
 	}
+}
+
+// hasSuggestionLine returns true if any line starts with the › prompt prefix.
+// More precise than strings.Contains — avoids matching › in arbitrary output content.
+func hasSuggestionLine(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "›") {
+			return true
+		}
+	}
+	return false
 }
 
 func lastNonEmptyLine(out string) string {
