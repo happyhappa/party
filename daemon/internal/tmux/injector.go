@@ -8,6 +8,7 @@ import (
 	"time"
 
 	logpkg "github.com/norm/relay-daemon/internal/log"
+	"github.com/norm/relay-daemon/internal/pane"
 	"github.com/norm/relay-daemon/pkg/envelope"
 )
 
@@ -218,7 +219,7 @@ func (pq *paneQueue) run(ctx context.Context, injector *Injector) {
 		ready, tail, err := injector.IsPaneReady(paneID, pq.target)
 		if err != nil || !ready {
 			// CX suggestion detected — dismiss and inject immediately
-			if pq.target == "cx" && codexFooterVisible(tail) {
+			if pq.target == "cx" && pane.CodexFooterVisible(tail) {
 				_, _ = injector.tmux.Run("send-keys", "-t", pq.paneID, " ")
 				time.Sleep(200 * time.Millisecond)
 				_, _ = injector.tmux.Run("send-keys", "-t", pq.paneID, "BSpace")
@@ -287,52 +288,12 @@ func (i *Injector) IsPaneReady(paneID, target string) (bool, string, error) {
 		return false, "", nil
 	}
 
-	out, err := i.tmux.Run("capture-pane", "-t", paneID, "-p", "-S", "-5")
+	out, err := i.tmux.Run("capture-pane", "-t", paneID, "-p", "-S", "-40")
 	if err != nil {
 		return false, "", err
 	}
-
-	last := lastNonEmptyLine(out)
-	if last == "" {
-		return false, strings.TrimSpace(out), nil
-	}
-
-	for _, prefix := range []string{"❯", "›", "⏵", "?", "$", "%", ">"} {
-		if strings.HasPrefix(strings.TrimSpace(last), prefix) {
-			// Codex shows › for suggestions too. When a suggestion is
-			// active the footer line ("% left ·") is visible — treat
-			// that as NOT ready. The run() loop handles dismissal.
-			if prefix == "›" && target == "cx" && codexFooterVisible(out) {
-				return false, strings.TrimSpace(out), nil
-			}
-			return true, strings.TrimSpace(out), nil
-		}
-	}
-	return false, strings.TrimSpace(out), nil
-}
-
-func lastNonEmptyLine(out string) string {
-	lines := strings.Split(out, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line != "" {
-			return line
-		}
-	}
-	return ""
-}
-
-// codexFooterVisible returns true if the captured pane text contains
-// the Codex status footer, indicating a suggestion prompt is active
-// rather than a genuine input prompt.
-func codexFooterVisible(paneText string) bool {
-	for _, line := range strings.Split(paneText, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.Contains(trimmed, "% left ·") || strings.Contains(trimmed, "% context left") {
-			return true
-		}
-	}
-	return false
+	parsed := pane.ParsePaneState(target, out)
+	return parsed.Ready, strings.TrimSpace(out), nil
 }
 
 func nextBackoff(current time.Duration) time.Duration {

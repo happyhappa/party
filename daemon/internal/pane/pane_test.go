@@ -1,0 +1,65 @@
+package pane
+
+import "testing"
+
+func TestParsePaneStateCXReady(t *testing.T) {
+	captured := "some output\n›"
+	state := ParsePaneState("cx", captured)
+	if !state.Ready {
+		t.Fatalf("expected ready=true, got false")
+	}
+	if state.SuggestionActive {
+		t.Fatalf("expected suggestion_active=false")
+	}
+	if state.ContextPct != -1 {
+		t.Fatalf("expected context_pct=-1, got %d", state.ContextPct)
+	}
+}
+
+func TestParsePaneStateCXSuggestionActive(t *testing.T) {
+	captured := "› Run /review\n84% context left · ? for shortcuts"
+	state := ParsePaneState("cx", captured)
+	if state.Ready {
+		t.Fatalf("expected ready=false when footer visible")
+	}
+	if !state.SuggestionActive {
+		t.Fatalf("expected suggestion_active=true")
+	}
+	if state.ContextPct != 84 {
+		t.Fatalf("expected context_pct=84, got %d", state.ContextPct)
+	}
+	if !state.Idle {
+		t.Fatalf("expected idle=true")
+	}
+}
+
+func TestParsePaneStateCXCompacted(t *testing.T) {
+	captured := "Context compacted 12 seconds ago\n›"
+	state := ParsePaneState("cx", captured)
+	if !state.Compacted {
+		t.Fatalf("expected compacted=true")
+	}
+	if state.CompactedAgoS != 12 {
+		t.Fatalf("expected compacted_ago_s=12, got %d", state.CompactedAgoS)
+	}
+}
+
+func TestParsePaneStateCC(t *testing.T) {
+	captured := "work\n✻ Conversation compacted\n❯"
+	state := ParsePaneState("cc", captured)
+	if !state.Ready || !state.Idle {
+		t.Fatalf("expected cc ready/idle true")
+	}
+	if !state.Compacted {
+		t.Fatalf("expected compacted=true")
+	}
+	if state.ContextPct != -1 {
+		t.Fatalf("expected context_pct=-1, got %d", state.ContextPct)
+	}
+	if state.SuggestionActive {
+		t.Fatalf("expected suggestion_active=false")
+	}
+	if state.CompactedAgoS != 0 {
+		t.Fatalf("expected compacted_ago_s=0 when marker has no duration, got %d", state.CompactedAgoS)
+	}
+}
