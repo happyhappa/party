@@ -12,7 +12,7 @@
 set -euo pipefail
 
 STATE_DIR="${RELAY_STATE_DIR:-$HOME/llm-share/relay/state}"
-LOG_FILE="$STATE_DIR/checkpoints.log"
+LOG_FILE="$STATE_DIR/admin-health.log"
 PANES_FILE="$STATE_DIR/panes.json"
 
 CX_CMD="${RELAY_CX_CMD:-codex -a never -s workspace-write --add-dir /tmp --add-dir ~/llm-share --add-dir ~/.cache --add-dir ~/.local/share/relay/outbox/cx}"

@@ -19,7 +19,7 @@ type Event struct {
 	Version   int    `json:"v"`                   // Schema version, always 1
 	TimestampMs int64  `json:"ts_ms"`              // Unix milliseconds
 	EventID   string `json:"event_id"`            // "evt-abc123"
-	Type      string `json:"type"`                // "checkpoint_request", "checkpoint_ack", "message_routed", "timeout", etc.
+	Type      string `json:"type"`                // "message_routed", "timeout", "inject", "blocked", etc.
 	From      string `json:"from,omitempty"`      // "admin", "oc", "cc", "cx"
 	To        string `json:"to,omitempty"`        // "admin", "oc", "cc", "cx", "all"
 	ChkID     string `json:"chk_id,omitempty"`    // Checkpoint correlation ID
@@ -70,8 +70,6 @@ func (e Event) WithCount(count int) Event {
 
 // EventType constants for RFC-002 compliance.
 const (
-	EventTypeCheckpointRequest = "checkpoint_request"
-	EventTypeCheckpointAck     = "checkpoint_ack"
 	EventTypeMessageRouted     = "message_routed"
 	EventTypeTimeout           = "timeout"
 	EventTypeReceived          = "received"

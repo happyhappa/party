@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/norm/relay-daemon/internal/adminpane"
-	"github.com/norm/relay-daemon/internal/checkpoint"
 	cfgpkg "github.com/norm/relay-daemon/internal/config"
 	inbox "github.com/norm/relay-daemon/internal/inbox"
 	logpkg "github.com/norm/relay-daemon/internal/log"
@@ -161,38 +159,6 @@ func main() {
 				return
 			}
 			_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeReceived, env.From, env.To).WithMsgID(env.MsgID))
-
-			// Handle checkpoint content directly so bead writing does not depend on
-			// admin-pane prompt state or legacy pending-request state machines.
-			if env.To == "admin" && env.Kind == "checkpoint_content" {
-				cc, err := checkpoint.Parse(env.Payload)
-				if err != nil {
-					_ = logger.Log(logpkg.NewEvent("checkpoint_content_error", env.From, "admin").WithMsgID(env.MsgID).WithError(err.Error()))
-					continue
-				}
-
-				// Normalize checkpoint correlation key at daemon-write time.
-				// Keep the agent-provided chk_id for traceability.
-				originalChkID := cc.ChkID
-				if cc.Labels == nil {
-					cc.Labels = map[string]string{}
-				}
-				cc.Labels["agent_chk_id"] = originalChkID
-				cycleKey := fmt.Sprintf("cycle-%d", time.Now().UTC().Unix()/60)
-				cc.ChkID = cycleKey
-
-				if cc.Role != env.From {
-					_ = logger.Log(logpkg.NewEvent("checkpoint_content_error", env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithError("role mismatch"))
-					continue
-				}
-				beadID, err := checkpoint.WriteBead(cc)
-				if err != nil {
-					_ = logger.Log(logpkg.NewEvent("checkpoint_bead_error", env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithError(err.Error()))
-					continue
-				}
-				_ = logger.Log(logpkg.NewEvent(logpkg.EventTypeCheckpointAck, env.From, "admin").WithMsgID(env.MsgID).WithChkID(cc.ChkID).WithStatus("written:"+beadID))
-				continue
-			}
 
 			// Handle broadcast to all agents (including admin if present)
 			if env.To == "all" {

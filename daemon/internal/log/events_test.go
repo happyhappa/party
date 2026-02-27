@@ -34,7 +34,7 @@ func TestEventLogSchemaFields(t *testing.T) {
 	logger := NewEventLog(dir)
 
 	evt := Event{
-		Type:   EventTypeCheckpointAck,
+		Type:   EventTypeMessageRouted,
 		From:   "cc",
 		To:     "admin",
 		ChkID:  "chk-abc123",

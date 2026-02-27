@@ -243,15 +243,7 @@ func fetchCheckpoint(bdPath, role string) (string, string, string) {
 		return id, body, "task_completed"
 	}
 
-	// Fallback B (transitional): legacy recovery or checkpoint beads
-	if id, body := queryBead(bdPath, "recovery", role, ""); id != "" {
-		return id, body, "recovery"
-	}
-	if id, body := queryBead(bdPath, "checkpoint", role, ""); id != "" {
-		return id, body, "checkpoint"
-	}
-
-	// Fallback C: session brief
+	// Fallback B: session brief
 	if id, body := queryBeadByLabel(bdPath, role, "kind:session_brief"); id != "" {
 		return id, body, "session_brief"
 	}
