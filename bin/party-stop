@@ -116,7 +116,7 @@ if [[ -f "$PROJECT_DIRS_FILE" ]] && command -v party-jsonl-filter &>/dev/null &&
         PROJECT_DIR_FOR_ROLE=$(jq -r ".${ROLE} // empty" "$PROJECT_DIRS_FILE" 2>/dev/null || true)
         [[ -z "$PROJECT_DIR_FOR_ROLE" ]] && continue
 
-        LATEST_JSONL=$(ls -t "$PROJECT_DIR_FOR_ROLE"/*.jsonl 2>/dev/null | head -1)
+        LATEST_JSONL=$(ls -t "$PROJECT_DIR_FOR_ROLE"/*.jsonl 2>/dev/null | head -1 || true)
         [[ -z "$LATEST_JSONL" || ! -s "$LATEST_JSONL" ]] && continue
 
         BRIEF_LOG="/tmp/party-stop-brief-${ROLE}-$(date +%s).log"
@@ -202,7 +202,7 @@ if [[ -n "${BRIEF_WORKER_PIDS+x}" && ${#BRIEF_WORKER_PIDS[@]} -gt 0 ]]; then
         else
             WORKER_LOG="/tmp/party-stop-brief-${ROLE}-"*".log"
             # shellcheck disable=SC2086
-            LATEST_WORKER_LOG=$(ls -t $WORKER_LOG 2>/dev/null | head -1)
+            LATEST_WORKER_LOG=$(ls -t $WORKER_LOG 2>/dev/null | head -1 || true)
             if [[ -n "$LATEST_WORKER_LOG" ]] && grep -qF "completed" "$LATEST_WORKER_LOG" 2>/dev/null; then
                 log "Brief worker for $ROLE completed successfully"
             else
