@@ -904,7 +904,7 @@ func runPaneStatus(args []string) error {
 		if err != nil {
 			return fmt.Errorf("capture pane for %s (%s): %w", roleFilter, paneID, err)
 		}
-		st := pane.ParsePaneState(roleFilter, captured)
+		st := pane.ParsePaneStateWithTelemetry(roleFilter, captured, stateDir)
 		if procName, pErr := mux.Run("display-message", "-t", paneID, "-p", "#{pane_current_command}"); pErr == nil {
 			st.ProcessName = strings.TrimSpace(procName)
 		}
@@ -926,7 +926,7 @@ func runPaneStatus(args []string) error {
 			if err != nil {
 				return fmt.Errorf("capture pane for %s (%s): %w", role, paneID, err)
 			}
-			st := pane.ParsePaneState(role, captured)
+			st := pane.ParsePaneStateWithTelemetry(role, captured, stateDir)
 			if procName, pErr := mux.Run("display-message", "-t", paneID, "-p", "#{pane_current_command}"); pErr == nil {
 				st.ProcessName = strings.TrimSpace(procName)
 			}

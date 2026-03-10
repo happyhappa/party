@@ -1,9 +1,13 @@
 package pane
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
@@ -12,6 +16,37 @@ var (
 	cxCompactRe     = regexp.MustCompile(`(?i)context compacted(?:[^0-9]+(\d+\s*(?:seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s+ago))?`)
 	claudeCompactRe = regexp.MustCompile(`(?i)✻\s*conversation compacted(?:[^0-9]+(\d+\s*(?:seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s+ago))?`)
 )
+
+// TelemetryData is the sidecar JSON written by the statusline script.
+type TelemetryData struct {
+	Role         string  `json:"role"`
+	Timestamp    int64   `json:"timestamp"`
+	ContextPct   float64 `json:"context_pct"`
+	ModelID      string  `json:"model_id"`
+	ModelDisplay string  `json:"model_display"`
+	SessionID    string  `json:"session_id"`
+	CostUSD      float64 `json:"cost_usd"`
+	DurationMS   int64   `json:"duration_ms"`
+	TokensIn     int64   `json:"tokens_in"`
+	TokensOut    int64   `json:"tokens_out"`
+	LinesAdded   int64   `json:"lines_added"`
+	LinesRemoved int64   `json:"lines_removed"`
+}
+
+// ReadTelemetrySidecar reads the telemetry sidecar file for a given role.
+// Returns nil and an error if the file is missing or unparseable.
+func ReadTelemetrySidecar(stateDir, role string) (*TelemetryData, error) {
+	path := filepath.Join(stateDir, "telemetry-"+role+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var td TelemetryData
+	if err := json.Unmarshal(data, &td); err != nil {
+		return nil, err
+	}
+	return &td, nil
+}
 
 // State is parsed pane state data emitted by relay-daemon --pane-status.
 type State struct {
@@ -22,6 +57,14 @@ type State struct {
 	CompactedAgoS    int    `json:"compacted_ago_s"`
 	Idle             bool   `json:"idle"`
 	ProcessName      string `json:"process_name,omitempty"`
+	// Sidecar telemetry fields (CC/OC only, populated by ParsePaneStateWithTelemetry)
+	ModelID          string  `json:"model_id,omitempty"`
+	SessionID        string  `json:"session_id,omitempty"`
+	CostUSD          float64 `json:"cost_usd,omitempty"`
+	TokensIn         int64   `json:"tokens_in,omitempty"`
+	TokensOut        int64   `json:"tokens_out,omitempty"`
+	TelemetryAge     int     `json:"telemetry_age_s,omitempty"`
+	IdentityVerified *bool   `json:"identity_verified,omitempty"`
 }
 
 // ParsePaneState parses pane capture text into normalized pane state.
@@ -55,6 +98,48 @@ func ParsePaneState(target, capturedText string) State {
 			out.CompactedAgoS = extractCompactedAgoSeconds(capturedText, claudeCompactRe)
 		}
 	}
+
+	return out
+}
+
+// ParsePaneStateWithTelemetry extends ParsePaneState by overlaying sidecar
+// telemetry data for CC/OC roles. CX is skipped (no custom statusline script).
+// If the sidecar is missing, stale (>60s), or unparseable, the extra fields
+// are left at zero values and the base terminal-parsed state is returned.
+func ParsePaneStateWithTelemetry(target, capturedText, stateDir string) State {
+	out := ParsePaneState(target, capturedText)
+	role := strings.ToLower(strings.TrimSpace(target))
+
+	// CX has no sidecar — skip
+	if role == "cx" || stateDir == "" {
+		return out
+	}
+
+	td, err := ReadTelemetrySidecar(stateDir, role)
+	if err != nil || td == nil {
+		return out
+	}
+
+	age := int(time.Now().Unix() - td.Timestamp)
+	if age > 60 || age < 0 {
+		// Stale or future timestamp — don't trust it
+		return out
+	}
+
+	// Overlay sidecar data
+	if td.ContextPct > 0 {
+		out.ContextPct = int(td.ContextPct)
+	}
+	out.ModelID = td.ModelID
+	out.SessionID = td.SessionID
+	out.CostUSD = td.CostUSD
+	out.TokensIn = td.TokensIn
+	out.TokensOut = td.TokensOut
+	out.TelemetryAge = age
+
+	// Identity verification: sidecar role should match expected role
+	verified := td.Role == role
+	out.IdentityVerified = &verified
 
 	return out
 }

@@ -1,6 +1,13 @@
 package pane
 
-import "testing"
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 func TestParsePaneStateCXReady(t *testing.T) {
 	captured := "some output\n›"
@@ -149,5 +156,209 @@ func TestParsePaneStateCXStatuslineOnly(t *testing.T) {
 	state := ParsePaneState("cx", captured)
 	if state.ContextPct != -1 {
 		t.Fatalf("expected context_pct=-1 when only statusline present (no footer), got %d", state.ContextPct)
+	}
+}
+
+func writeSidecar(t *testing.T, dir, role string, td *TelemetryData) {
+	t.Helper()
+	data, err := json.Marshal(td)
+	if err != nil {
+		t.Fatalf("marshal sidecar: %v", err)
+	}
+	path := filepath.Join(dir, fmt.Sprintf("telemetry-%s.json", role))
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("write sidecar: %v", err)
+	}
+}
+
+func TestReadTelemetrySidecar(t *testing.T) {
+	dir := t.TempDir()
+	td := &TelemetryData{
+		Role:         "cc",
+		Timestamp:    time.Now().Unix(),
+		ContextPct:   14.5,
+		ModelID:      "claude-opus-4-6",
+		ModelDisplay: "Opus 4.6",
+		SessionID:    "abc-123",
+		CostUSD:      1.47,
+		DurationMS:   342000,
+		TokensIn:     45000,
+		TokensOut:    12000,
+		LinesAdded:   150,
+		LinesRemoved: 42,
+	}
+	writeSidecar(t, dir, "cc", td)
+
+	got, err := ReadTelemetrySidecar(dir, "cc")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Role != "cc" {
+		t.Fatalf("expected role=cc, got %s", got.Role)
+	}
+	if got.ContextPct != 14.5 {
+		t.Fatalf("expected context_pct=14.5, got %f", got.ContextPct)
+	}
+	if got.ModelID != "claude-opus-4-6" {
+		t.Fatalf("expected model_id=claude-opus-4-6, got %s", got.ModelID)
+	}
+	if got.SessionID != "abc-123" {
+		t.Fatalf("expected session_id=abc-123, got %s", got.SessionID)
+	}
+	if got.CostUSD != 1.47 {
+		t.Fatalf("expected cost_usd=1.47, got %f", got.CostUSD)
+	}
+	if got.TokensIn != 45000 {
+		t.Fatalf("expected tokens_in=45000, got %d", got.TokensIn)
+	}
+	if got.TokensOut != 12000 {
+		t.Fatalf("expected tokens_out=12000, got %d", got.TokensOut)
+	}
+}
+
+func TestReadTelemetrySidecarMissing(t *testing.T) {
+	dir := t.TempDir()
+	got, err := ReadTelemetrySidecar(dir, "cc")
+	if err == nil {
+		t.Fatalf("expected error for missing sidecar, got nil")
+	}
+	if got != nil {
+		t.Fatalf("expected nil data for missing sidecar")
+	}
+}
+
+func TestReadTelemetrySidecarInvalid(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "telemetry-cc.json")
+	if err := os.WriteFile(path, []byte("not json"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := ReadTelemetrySidecar(dir, "cc")
+	if err == nil {
+		t.Fatalf("expected error for invalid JSON")
+	}
+	if got != nil {
+		t.Fatalf("expected nil data for invalid JSON")
+	}
+}
+
+func TestParsePaneStateWithTelemetryCC(t *testing.T) {
+	dir := t.TempDir()
+	td := &TelemetryData{
+		Role:         "cc",
+		Timestamp:    time.Now().Unix(),
+		ContextPct:   14,
+		ModelID:      "claude-opus-4-6",
+		ModelDisplay: "Opus 4.6",
+		SessionID:    "sess-001",
+		CostUSD:      2.50,
+		TokensIn:     50000,
+		TokensOut:    15000,
+	}
+	writeSidecar(t, dir, "cc", td)
+
+	captured := "work\n❯ \n──────────────────────────────────\n  ~/path | cc-wt | Opus 4.6 | ctx:14%\n  ⏵⏵ bypass"
+	state := ParsePaneStateWithTelemetry("cc", captured, dir)
+
+	if !state.Ready {
+		t.Fatalf("expected ready=true")
+	}
+	if state.ContextPct != 14 {
+		t.Fatalf("expected context_pct=14 from sidecar, got %d", state.ContextPct)
+	}
+	if state.ModelID != "claude-opus-4-6" {
+		t.Fatalf("expected model_id=claude-opus-4-6, got %s", state.ModelID)
+	}
+	if state.SessionID != "sess-001" {
+		t.Fatalf("expected session_id=sess-001, got %s", state.SessionID)
+	}
+	if state.CostUSD != 2.50 {
+		t.Fatalf("expected cost_usd=2.50, got %f", state.CostUSD)
+	}
+	if state.TokensIn != 50000 {
+		t.Fatalf("expected tokens_in=50000, got %d", state.TokensIn)
+	}
+	if state.TokensOut != 15000 {
+		t.Fatalf("expected tokens_out=15000, got %d", state.TokensOut)
+	}
+	if state.IdentityVerified == nil || !*state.IdentityVerified {
+		t.Fatalf("expected identity_verified=true")
+	}
+	if state.TelemetryAge < 0 || state.TelemetryAge > 2 {
+		t.Fatalf("expected telemetry_age_s near 0, got %d", state.TelemetryAge)
+	}
+}
+
+func TestParsePaneStateWithTelemetryStale(t *testing.T) {
+	dir := t.TempDir()
+	td := &TelemetryData{
+		Role:       "cc",
+		Timestamp:  time.Now().Unix() - 120, // 2 minutes old
+		ContextPct: 14,
+		ModelID:    "claude-opus-4-6",
+	}
+	writeSidecar(t, dir, "cc", td)
+
+	captured := "work\n❯"
+	state := ParsePaneStateWithTelemetry("cc", captured, dir)
+
+	// Sidecar is stale — new fields should be zero
+	if state.ModelID != "" {
+		t.Fatalf("expected empty model_id for stale sidecar, got %s", state.ModelID)
+	}
+	if state.IdentityVerified != nil {
+		t.Fatalf("expected nil identity_verified for stale sidecar")
+	}
+	// Base parsing still works
+	if !state.Ready {
+		t.Fatalf("expected ready=true from terminal parsing")
+	}
+}
+
+func TestParsePaneStateWithTelemetryCX(t *testing.T) {
+	dir := t.TempDir()
+	// Even if a sidecar exists for cx, it should be ignored
+	td := &TelemetryData{
+		Role:       "cx",
+		Timestamp:  time.Now().Unix(),
+		ContextPct: 99,
+		ModelID:    "gpt-5.3-codex",
+	}
+	writeSidecar(t, dir, "cx", td)
+
+	captured := "some output\n›"
+	state := ParsePaneStateWithTelemetry("cx", captured, dir)
+
+	if state.ModelID != "" {
+		t.Fatalf("expected empty model_id for CX (sidecar skipped), got %s", state.ModelID)
+	}
+	if state.IdentityVerified != nil {
+		t.Fatalf("expected nil identity_verified for CX")
+	}
+	if !state.Ready {
+		t.Fatalf("expected ready=true")
+	}
+}
+
+func TestParsePaneStateWithTelemetryIdentityMismatch(t *testing.T) {
+	dir := t.TempDir()
+	// Sidecar says "oc" but we're querying "cc" — identity mismatch
+	td := &TelemetryData{
+		Role:       "oc",
+		Timestamp:  time.Now().Unix(),
+		ContextPct: 30,
+		ModelID:    "claude-opus-4-6",
+	}
+	writeSidecar(t, dir, "cc", td)
+
+	captured := "work\n❯"
+	state := ParsePaneStateWithTelemetry("cc", captured, dir)
+
+	if state.IdentityVerified == nil || *state.IdentityVerified {
+		t.Fatalf("expected identity_verified=false for role mismatch")
+	}
+	// Data is still overlaid even on mismatch — caller decides what to do
+	if state.ModelID != "claude-opus-4-6" {
+		t.Fatalf("expected model_id to be set even on mismatch, got %s", state.ModelID)
 	}
 }
