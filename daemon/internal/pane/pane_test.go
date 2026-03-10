@@ -109,3 +109,45 @@ func TestParsePaneStateCCCompactedWithStatusBar(t *testing.T) {
 		t.Fatalf("expected compacted=true")
 	}
 }
+
+func TestParsePaneStateCCWithStatusline(t *testing.T) {
+	// New statusline layout: separator + statusline content + permission bar
+	captured := "some output\n❯ \n──────────────────────────────────\n  ~/Sandbox/personal/new_party/cc-wt | cc-wt | Opus 4.6 | ctx:14%\n  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+	state := ParsePaneState("cc", captured)
+	if !state.Ready {
+		t.Fatalf("expected ready=true with statusline below prompt, got false")
+	}
+	if !state.Idle {
+		t.Fatalf("expected idle=true with statusline below prompt, got false")
+	}
+}
+
+func TestParsePaneStateCCBusyWithStatusline(t *testing.T) {
+	// Busy with statusline — no prompt visible
+	captured := "● Reading file.go\n\n✽ Thinking… (thought for 5s)\n──────────────────────────────────\n  ~/path | main | Opus 4.6 | ctx:34%\n  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt"
+	state := ParsePaneState("oc", captured)
+	if state.Ready {
+		t.Fatalf("expected ready=false when busy with statusline, got true")
+	}
+	if state.Idle {
+		t.Fatalf("expected idle=false when busy with statusline, got false")
+	}
+}
+
+func TestParsePaneStateCXWithStatusline(t *testing.T) {
+	// CX with both footer (84%) and statusline (99% left) — should use footer value
+	captured := "› Run /review\n84% context left · ? for shortcuts\n\ngpt-5.3-codex default · 99% left · ~/path · cx-wt"
+	state := ParsePaneState("cx", captured)
+	if state.ContextPct != 84 {
+		t.Fatalf("expected context_pct=84 from footer, not 99 from statusline, got %d", state.ContextPct)
+	}
+}
+
+func TestParsePaneStateCXStatuslineOnly(t *testing.T) {
+	// CX idle with only statusline visible (no footer) — should not match statusline
+	captured := "some output\n›\n\ngpt-5.3-codex default · 99% left · ~/path"
+	state := ParsePaneState("cx", captured)
+	if state.ContextPct != -1 {
+		t.Fatalf("expected context_pct=-1 when only statusline present (no footer), got %d", state.ContextPct)
+	}
+}
