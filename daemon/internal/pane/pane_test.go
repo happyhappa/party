@@ -24,7 +24,7 @@ func TestParsePaneStateCXReady(t *testing.T) {
 }
 
 func TestParsePaneStateCXSuggestionActive(t *testing.T) {
-	captured := "› Run /review\n84% context left · ? for shortcuts"
+	captured := "› Run /review\n84% context left · ? for shortcuts\n\ngpt-5.3-codex · 16% used · ~/path · cx-wt"
 	state := ParsePaneState("cx", captured)
 	if state.Ready {
 		t.Fatalf("expected ready=false when footer visible")
@@ -32,8 +32,8 @@ func TestParsePaneStateCXSuggestionActive(t *testing.T) {
 	if !state.SuggestionActive {
 		t.Fatalf("expected suggestion_active=true")
 	}
-	if state.ContextPct != 84 {
-		t.Fatalf("expected context_pct=84, got %d", state.ContextPct)
+	if state.ContextPct != 16 {
+		t.Fatalf("expected context_pct=16 (used), got %d", state.ContextPct)
 	}
 	if !state.Idle {
 		t.Fatalf("expected idle=true")
@@ -72,10 +72,10 @@ func TestParsePaneStateCC(t *testing.T) {
 }
 
 func TestParsePaneStateCXShortFooter(t *testing.T) {
-	captured := "› Run /review\n84% left · ? for shortcuts"
+	captured := "› Run /review\n84% left · ? for shortcuts\n\ngpt-5.3-codex · 16% used · ~/path · cx-wt"
 	state := ParsePaneState("cx", captured)
-	if state.ContextPct != 84 {
-		t.Fatalf("expected context_pct=84 for short footer format, got %d", state.ContextPct)
+	if state.ContextPct != 16 {
+		t.Fatalf("expected context_pct=16 (used) from statusline, got %d", state.ContextPct)
 	}
 	if !state.SuggestionActive {
 		t.Fatalf("expected suggestion_active=true")
@@ -142,20 +142,20 @@ func TestParsePaneStateCCBusyWithStatusline(t *testing.T) {
 }
 
 func TestParsePaneStateCXWithStatusline(t *testing.T) {
-	// CX with both footer (84%) and statusline (99% left) — should use footer value
-	captured := "› Run /review\n84% context left · ? for shortcuts\n\ngpt-5.3-codex default · 99% left · ~/path · cx-wt"
+	// CX with both footer and statusline — statusline "N% used" is the primary source
+	captured := "› Run /review\n84% context left · ? for shortcuts\n\ngpt-5.3-codex default · 16% used · ~/path · cx-wt"
 	state := ParsePaneState("cx", captured)
-	if state.ContextPct != 84 {
-		t.Fatalf("expected context_pct=84 from footer, not 99 from statusline, got %d", state.ContextPct)
+	if state.ContextPct != 16 {
+		t.Fatalf("expected context_pct=16 from statusline (used), got %d", state.ContextPct)
 	}
 }
 
 func TestParsePaneStateCXStatuslineOnly(t *testing.T) {
-	// CX idle with only statusline visible (no footer) — should not match statusline
-	captured := "some output\n›\n\ngpt-5.3-codex default · 99% left · ~/path"
+	// CX idle with only statusline visible (no footer) — statusline is now primary source
+	captured := "some output\n›\n\ngpt-5.3-codex default · 16% used · ~/path"
 	state := ParsePaneState("cx", captured)
-	if state.ContextPct != -1 {
-		t.Fatalf("expected context_pct=-1 when only statusline present (no footer), got %d", state.ContextPct)
+	if state.ContextPct != 16 {
+		t.Fatalf("expected context_pct=16 from statusline (used), got %d", state.ContextPct)
 	}
 }
 
