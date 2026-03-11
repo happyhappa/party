@@ -213,6 +213,42 @@ OC_CLAUDE_EOF
 fi
 write_claude_md "$CC_DIR"
 
+# --- Deploy Claude Code statusline script for CC/OC ---
+SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../daemon/scripts/statusline"
+STATUSLINE_SRC="$SCRIPT_DIR/claude-statusline.sh"
+STATUSLINE_DST="$HOME/.claude/statusline-command.sh"
+if [[ -f "$STATUSLINE_SRC" ]]; then
+    cp "$STATUSLINE_SRC" "$STATUSLINE_DST"
+    chmod +x "$STATUSLINE_DST"
+    # Ensure settings.json has statusLine config
+    SETTINGS_JSON="$HOME/.claude/settings.json"
+    if [[ -f "$SETTINGS_JSON" ]]; then
+        if ! jq -e '.statusLine' "$SETTINGS_JSON" &>/dev/null; then
+            jq '.statusLine = {"type": "command", "command": "bash ~/.claude/statusline-command.sh"}' \
+                "$SETTINGS_JSON" > "$SETTINGS_JSON.tmp" && mv "$SETTINGS_JSON.tmp" "$SETTINGS_JSON"
+        fi
+    fi
+    log "Deployed statusline script to $STATUSLINE_DST"
+else
+    log "Statusline script not found at $STATUSLINE_SRC — skipping"
+fi
+
+# --- Lock CX statusline config for deterministic parsing ---
+CX_CONFIG="$HOME/.codex/config.toml"
+if [[ -f "$CX_CONFIG" ]]; then
+    # Update existing [tui] section or add it
+    if grep -q '^\[tui\]' "$CX_CONFIG"; then
+        # Replace existing status_line value
+        sed -i 's/^status_line = .*/status_line = ["model-with-reasoning", "context-remaining", "git-branch"]/' "$CX_CONFIG"
+    else
+        printf '\n[tui]\nstatus_line = ["model-with-reasoning", "context-remaining", "git-branch"]\n' >> "$CX_CONFIG"
+    fi
+else
+    mkdir -p "$(dirname "$CX_CONFIG")"
+    printf '[tui]\nstatus_line = ["model-with-reasoning", "context-remaining", "git-branch"]\n' > "$CX_CONFIG"
+fi
+log "Locked CX statusline config in $CX_CONFIG"
+
 # Write project-dirs.json for relay-daemon idle detection (atomic write)
 OC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$OC_DIR")"
 CC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$CC_DIR")"
