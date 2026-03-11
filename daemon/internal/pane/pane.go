@@ -127,7 +127,7 @@ func ParsePaneStateWithTelemetry(target, capturedText, stateDir string) State {
 	}
 
 	// Overlay sidecar data
-	if td.ContextPct > 0 {
+	if td.ContextPct >= 0 {
 		out.ContextPct = int(td.ContextPct)
 	}
 	out.ModelID = td.ModelID
