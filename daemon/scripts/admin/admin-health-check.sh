@@ -208,5 +208,82 @@ for ROLE in oc cc cx; do
     fi
 done
 
+# --- CC/OC auto-compact via sidecar telemetry ---
+# Claude auto-compacts at 85% used. We fire at 75% so we control the cycle:
+# /pc (checkpoint) -> /compact -> /rec (restore). Threshold must stay below 85%.
+CLAUDE_COMPACT_THRESHOLD=75  # percent USED
+
+for ROLE in oc cc; do
+    SIDECAR="$STATE_DIR/telemetry-${ROLE}.json"
+    [[ -f "$SIDECAR" ]] || continue
+
+    # Read sidecar and check freshness
+    SIDECAR_JSON=$(cat "$SIDECAR" 2>/dev/null) || continue
+    SIDECAR_TS=$(echo "$SIDECAR_JSON" | jq -r '.timestamp // 0')
+    NOW_EPOCH=$(date +%s)
+    SIDECAR_AGE=$(( NOW_EPOCH - SIDECAR_TS ))
+    if (( SIDECAR_AGE > 120 || SIDECAR_AGE < 0 )); then
+        continue  # stale or future — skip
+    fi
+
+    CTX_USED=$(echo "$SIDECAR_JSON" | jq -r '.context_pct // -1')
+    # context_pct from sidecar is USED percentage (not remaining)
+    if [[ "$CTX_USED" == "null" || "$CTX_USED" == "-1" ]]; then
+        continue
+    fi
+    # Convert to integer (truncate decimals)
+    CTX_USED_INT=${CTX_USED%.*}
+
+    if (( CTX_USED_INT < CLAUDE_COMPACT_THRESHOLD )); then
+        continue  # not at threshold yet
+    fi
+
+    # Check pane-status for idle + not already compacted
+    ROLE_STATUS=$(RELAY_STATE_DIR="$STATE_DIR" relay-daemon --pane-status "$ROLE" 2>/dev/null || true)
+    [[ -z "$ROLE_STATUS" ]] && continue
+
+    ROLE_IDLE=$(echo "$ROLE_STATUS" | jq -r ".panes.${ROLE}.idle // false")
+    ROLE_COMPACTED=$(echo "$ROLE_STATUS" | jq -r ".panes.${ROLE}.compacted // false")
+    ROLE_COMPACT_AGO=$(echo "$ROLE_STATUS" | jq -r ".panes.${ROLE}.compacted_ago_s // -1")
+
+    # Skip if agent is busy
+    [[ "$ROLE_IDLE" != "true" ]] && continue
+    # Skip if recently compacted (within 5 minutes)
+    if [[ "$ROLE_COMPACTED" == "true" && "$ROLE_COMPACT_AGO" -ge 0 && "$ROLE_COMPACT_AGO" -lt 300 ]]; then
+        continue
+    fi
+
+    echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"$ROLE\",\"action\":\"auto_compact_start\",\"context_pct_used\":$CTX_USED_INT}" >> "$LOG_FILE"
+
+    # Step 1: Pre-compact checkpoint
+    relay send --from admin "$ROLE" "/pc" || { log_anomaly "$ROLE" "relay_send_failed" "" "/pc"; continue; }
+    sleep 10
+
+    # Step 2: Compact
+    relay send --from admin "$ROLE" "/compact" || { log_anomaly "$ROLE" "relay_send_failed" "" "/compact"; continue; }
+
+    # Step 3: Poll for compaction (5s intervals, max 1min)
+    COMPACT_DONE=false
+    for i in $(seq 1 12); do
+        sleep 5
+        POLL_STATUS=$(RELAY_STATE_DIR="$STATE_DIR" relay-daemon --pane-status "$ROLE" 2>/dev/null || true)
+        POLL_COMPACTED=$(echo "$POLL_STATUS" | jq -r ".panes.${ROLE}.compacted // false")
+        POLL_AGO=$(echo "$POLL_STATUS" | jq -r ".panes.${ROLE}.compacted_ago_s // -1")
+        if [[ "$POLL_COMPACTED" == "true" && "$POLL_AGO" -ge 0 && "$POLL_AGO" -lt 120 ]]; then
+            COMPACT_DONE=true
+            break
+        fi
+    done
+
+    if [[ "$COMPACT_DONE" == "true" ]]; then
+        # Step 4: Restore context
+        sleep 2
+        relay send --from admin "$ROLE" "/rec" || { log_anomaly "$ROLE" "relay_send_failed" "" "/rec"; }
+        echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"$ROLE\",\"action\":\"auto_context_cycle_complete\"}" >> "$LOG_FILE"
+    else
+        echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"$ROLE\",\"action\":\"auto_compact_timeout\"}" >> "$LOG_FILE"
+    fi
+done
+
 # Log completion
 echo "{\"timestamp\":\"$TIMESTAMP\",\"type\":\"health-check\",\"results\":{\"oc\":\"${STATUS[oc]}\",\"cc\":\"${STATUS[cc]}\",\"cx\":\"${STATUS[cx]}\"},\"status\":\"complete\"}" >> "$LOG_FILE"
