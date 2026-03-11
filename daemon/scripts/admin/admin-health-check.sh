@@ -3,7 +3,7 @@
 # admin-health-check.sh - Lightweight health check across all agent panes
 #
 # Heuristic checks: process alive, CX footer, error patterns, bare prompt,
-# stale output. Auto-restarts CX if dead, auto-compacts CX if context <= 60%.
+# stale output. Auto-restarts CX if dead, auto-compacts CX if context >= 40% used.
 # Sidecar telemetry: session restart detection, cost monitoring, model drift,
 # staleness detection for CC/OC.
 #
@@ -108,7 +108,7 @@ for ROLE in oc cc cx; do
 
             CX_COMPACTED=$(echo "$CX_STATUS" | jq -r '.panes.cx.compacted // false')
 
-            if [[ "$CX_CONTEXT" -gt 0 && "$CX_CONTEXT" -le 60 && "$CX_IDLE" == "true" && "$CX_COMPACTED" != "true" ]]; then
+            if [[ "$CX_CONTEXT" -gt 0 && "$CX_CONTEXT" -ge 40 && "$CX_IDLE" == "true" && "$CX_COMPACTED" != "true" ]]; then
                 # Step 1: Send /compact
                 relay send --from admin cx "/compact" || { log_anomaly "cx" "relay_send_failed" "" "/compact"; }
                 echo "{\"timestamp\":\"$TIMESTAMP\",\"type\":\"health-action\",\"role\":\"cx\",\"action\":\"auto_compact_start\",\"context_pct\":$CX_CONTEXT}" >> "$LOG_FILE"

@@ -278,13 +278,13 @@ if [[ -f "$CX_CONFIG" ]]; then
     # Update existing [tui] section or add it
     if grep -q '^\[tui\]' "$CX_CONFIG"; then
         # Replace existing status_line value
-        sed -i 's/^status_line = .*/status_line = ["model-with-reasoning", "context-remaining", "git-branch"]/' "$CX_CONFIG"
+        sed -i 's/^status_line = .*/status_line = ["model-with-reasoning", "context-used", "project-root", "git-branch"]/' "$CX_CONFIG"
     else
-        printf '\n[tui]\nstatus_line = ["model-with-reasoning", "context-remaining", "git-branch"]\n' >> "$CX_CONFIG"
+        printf '\n[tui]\nstatus_line = ["model-with-reasoning", "context-used", "project-root", "git-branch"]\n' >> "$CX_CONFIG"
     fi
 else
     mkdir -p "$(dirname "$CX_CONFIG")"
-    printf '[tui]\nstatus_line = ["model-with-reasoning", "context-remaining", "git-branch"]\n' > "$CX_CONFIG"
+    printf '[tui]\nstatus_line = ["model-with-reasoning", "context-used", "project-root", "git-branch"]\n' > "$CX_CONFIG"
 fi
 log "Locked CX statusline config in $CX_CONFIG"
 

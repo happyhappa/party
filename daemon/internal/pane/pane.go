@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	contextPctRe    = regexp.MustCompile(`(\d+)%\s*(?:context\s+)?left`)
+	contextPctRe    = regexp.MustCompile(`(\d+)%\s*used`)
 	durationAgoRe   = regexp.MustCompile(`(?i)(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s+ago`)
 	cxCompactRe     = regexp.MustCompile(`(?i)context compacted(?:[^0-9]+(\d+\s*(?:seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s+ago))?`)
 	claudeCompactRe = regexp.MustCompile(`(?i)✻\s*conversation compacted(?:[^0-9]+(\d+\s*(?:seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s+ago))?`)
@@ -149,9 +149,11 @@ func CodexFooterVisible(capturedText string) bool {
 	return strings.Contains(capturedText, "% left ·") || strings.Contains(capturedText, "% context left")
 }
 
-// extractContextPct extracts context percentage from Codex footer lines only.
-// Skips statusline lines (which contain "· N% left ·" with middle-dots before
-// the percentage) to avoid false matches.
+// extractContextPct extracts context-used percentage from the CX statusline.
+// The statusline format is "model · N% used · ~/path · branch".
+// Only matches lines where · appears both before and after "N% used" to avoid
+// false positives from arbitrary output (e.g. "disk 40% used").
+// Returns the value directly as used-percentage (same direction as CC/OC sidecar).
 func extractContextPct(capturedText string) int {
 	lastPct := -1
 	for _, line := range strings.Split(capturedText, "\n") {
@@ -159,12 +161,9 @@ func extractContextPct(capturedText string) int {
 		if len(m) < 2 {
 			continue
 		}
-		// Statusline format: "model · N% left · path" — has · before the pct.
-		// Footer format: "N% context left · ?" or "N% left · ?" — pct is at/near line start.
-		// Skip lines where a · appears before the percentage match.
+		// Require · both before and after the match (statusline shape).
 		idx := strings.Index(line, m[0])
-		prefix := line[:idx]
-		if strings.Contains(prefix, "·") {
+		if !strings.Contains(line[:idx], "·") || !strings.Contains(line[idx+len(m[0]):], "·") {
 			continue
 		}
 		pct, err := strconv.Atoi(m[1])
