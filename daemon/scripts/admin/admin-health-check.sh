@@ -222,8 +222,9 @@ for ROLE in oc cc; do
     SIDECAR="$STATE_DIR/telemetry-${ROLE}.json"
     [[ -f "$SIDECAR" ]] || continue
 
-    # Read sidecar and check freshness
+    # Read sidecar and validate JSON before extracting fields
     SIDECAR_JSON=$(cat "$SIDECAR" 2>/dev/null) || continue
+    echo "$SIDECAR_JSON" | jq -e . >/dev/null 2>&1 || continue
     SIDECAR_TS=$(echo "$SIDECAR_JSON" | jq -r '.timestamp // 0')
     NOW_EPOCH=$(date +%s)
     SIDECAR_AGE=$(( NOW_EPOCH - SIDECAR_TS ))
@@ -300,6 +301,7 @@ for ROLE in oc cc; do
     [[ -f "$SIDECAR" ]] || continue
 
     SC_JSON=$(cat "$SIDECAR" 2>/dev/null) || continue
+    echo "$SC_JSON" | jq -e . >/dev/null 2>&1 || continue
     SC_TS=$(echo "$SC_JSON" | jq -r '.timestamp // 0')
     SC_AGE=$(( $(date +%s) - SC_TS ))
     # Skip all sidecar checks if data is too old
