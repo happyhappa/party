@@ -3,7 +3,7 @@
 # admin-health-check.sh - Lightweight health check across all agent panes
 #
 # Heuristic checks: process alive, CX footer, error patterns, bare prompt,
-# stale output. Auto-restarts CX if dead, auto-compacts CX if context <= 60%.
+# stale output. Auto-restarts CX if dead, auto-compacts CX if context >= 40% used.
 # Sidecar telemetry: session restart detection, cost monitoring, model drift,
 # staleness detection for CC/OC.
 #

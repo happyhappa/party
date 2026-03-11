@@ -150,6 +150,24 @@ func TestParsePaneStateCXWithStatusline(t *testing.T) {
 	}
 }
 
+func TestParsePaneStateCXStatuslineNoContextSegment(t *testing.T) {
+	// CX statusline with context-used segment missing — should return -1
+	captured := "some output\n›\n\ngpt-5.3-codex · ~/path · cx-wt"
+	state := ParsePaneState("cx", captured)
+	if state.ContextPct != -1 {
+		t.Fatalf("expected context_pct=-1 when statusline has no used segment, got %d", state.ContextPct)
+	}
+}
+
+func TestParsePaneStateCXFalsePositiveUsed(t *testing.T) {
+	// "N% used" in assistant output should NOT match (no · before and after)
+	captured := "cache 40% used\ndisk 92% used\n›\n\ngpt-5.3-codex · 16% used · ~/path · cx-wt"
+	state := ParsePaneState("cx", captured)
+	if state.ContextPct != 16 {
+		t.Fatalf("expected context_pct=16 from statusline, not false match from output, got %d", state.ContextPct)
+	}
+}
+
 func TestParsePaneStateCXStatuslineOnly(t *testing.T) {
 	// CX idle with only statusline visible (no footer) — statusline is now primary source
 	captured := "some output\n›\n\ngpt-5.3-codex default · 16% used · ~/path"

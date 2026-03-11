@@ -151,12 +151,19 @@ func CodexFooterVisible(capturedText string) bool {
 
 // extractContextPct extracts context-used percentage from the CX statusline.
 // The statusline format is "model · N% used · ~/path · branch".
+// Only matches lines where · appears both before and after "N% used" to avoid
+// false positives from arbitrary output (e.g. "disk 40% used").
 // Returns the value directly as used-percentage (same direction as CC/OC sidecar).
 func extractContextPct(capturedText string) int {
 	lastPct := -1
 	for _, line := range strings.Split(capturedText, "\n") {
 		m := contextPctRe.FindStringSubmatch(line)
 		if len(m) < 2 {
+			continue
+		}
+		// Require · both before and after the match (statusline shape).
+		idx := strings.Index(line, m[0])
+		if !strings.Contains(line[:idx], "·") || !strings.Contains(line[idx+len(m[0]):], "·") {
 			continue
 		}
 		pct, err := strconv.Atoi(m[1])
