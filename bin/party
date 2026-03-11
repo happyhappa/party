@@ -95,6 +95,45 @@ if [[ "${1:-}" == "stop" ]]; then
     exec party-stop "$@"
 fi
 
+# Handle 'party status' subcommand
+if [[ "${1:-}" == "status" ]]; then
+    # Read pane-status for all roles
+    PANE_JSON=$(RELAY_STATE_DIR="$RELAY_STATE_DIR" relay-daemon --pane-status 2>/dev/null || true)
+
+    for role in oc cc cx; do
+        # Pane-status fields
+        idle="n/a"
+        if [[ -n "$PANE_JSON" ]]; then
+            role_idle=$(echo "$PANE_JSON" | jq -r ".panes.${role}.idle // false")
+            [[ "$role_idle" == "true" ]] && idle="idle" || idle="active"
+        fi
+
+        # Sidecar telemetry
+        sidecar="$RELAY_STATE_DIR/telemetry-${role}.json"
+        ctx="n/a"; cost="n/a"; model="n/a"; sid_count="n/a"; identity="n/a"
+        if [[ -f "$sidecar" ]]; then
+            sc=$(cat "$sidecar" 2>/dev/null)
+            sc_ctx=$(echo "$sc" | jq -r '.context_pct // empty')
+            sc_cost=$(echo "$sc" | jq -r '.cost_usd // empty')
+            sc_model=$(echo "$sc" | jq -r '.model_display // empty')
+            sc_role=$(echo "$sc" | jq -r '.role // empty')
+
+            [[ -n "$sc_ctx" && "$sc_ctx" != "null" ]] && ctx="${sc_ctx%.*}%"
+            [[ -n "$sc_cost" && "$sc_cost" != "null" ]] && cost="\$$(printf '%.2f' "$sc_cost")"
+            [[ -n "$sc_model" && "$sc_model" != "null" ]] && model="$sc_model"
+            [[ "$sc_role" == "$role" ]] && identity="ok" || identity="MISMATCH"
+        fi
+
+        # Session count (number of stored session-id changes)
+        session_file="$RELAY_STATE_DIR/session-id-${role}.txt"
+        [[ -f "$session_file" ]] && sid_count="tracked" || sid_count="n/a"
+
+        printf "%-3s: ctx:%-5s cost:%-10s model:%-12s %-6s identity:%s\n" \
+            "$role" "$ctx" "$cost" "$model" "$idle" "$identity"
+    done
+    exit 0
+fi
+
 # Check if session already exists
 if tmux has-session -t "$SESSION" 2>/dev/null; then
     log "Session '$SESSION' already exists. Attaching..."

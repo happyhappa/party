@@ -4,11 +4,16 @@
 #
 # Heuristic checks: process alive, CX footer, error patterns, bare prompt,
 # stale output. Auto-restarts CX if dead, auto-compacts CX if context <= 60%.
+# Sidecar telemetry: session restart detection, cost monitoring, model drift,
+# staleness detection for CC/OC.
 #
 # Environment:
 #   RELAY_STATE_DIR        - State directory (default: ~/llm-share/relay/state)
 #   RELAY_ADMIN_ALERT_HOOK - Optional alert command
 #   RELAY_CX_CMD           - CX launch command (for restart-cx)
+#   EXPECTED_MODEL_OC      - Expected model for OC (default: claude-opus-4-6)
+#   EXPECTED_MODEL_CC      - Expected model for CC (default: claude-opus-4-6)
+#   COST_ALERT_THRESHOLD   - USD delta per check interval to trigger alert (default: 5.00)
 #
 
 set -euo pipefail
@@ -282,6 +287,70 @@ for ROLE in oc cc; do
         echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"$ROLE\",\"action\":\"auto_context_cycle_complete\"}" >> "$LOG_FILE"
     else
         echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"$ROLE\",\"action\":\"auto_compact_timeout\"}" >> "$LOG_FILE"
+    fi
+done
+
+# --- CC/OC sidecar telemetry checks (3b: session restart, 3c: cost, 3d: model drift, 3e: staleness) ---
+EXPECTED_MODEL_OC="${EXPECTED_MODEL_OC:-claude-opus-4-6}"
+EXPECTED_MODEL_CC="${EXPECTED_MODEL_CC:-claude-opus-4-6}"
+COST_ALERT_THRESHOLD="${COST_ALERT_THRESHOLD:-5.00}"
+
+for ROLE in oc cc; do
+    SIDECAR="$STATE_DIR/telemetry-${ROLE}.json"
+    [[ -f "$SIDECAR" ]] || continue
+
+    SC_JSON=$(cat "$SIDECAR" 2>/dev/null) || continue
+    SC_TS=$(echo "$SC_JSON" | jq -r '.timestamp // 0')
+    SC_AGE=$(( $(date +%s) - SC_TS ))
+    # Skip all sidecar checks if data is too old
+    if (( SC_AGE > 120 || SC_AGE < 0 )); then
+        # 3e: telemetry staleness — agent may be active but sidecar is old
+        if (( SC_AGE > 600 )) && ! is_agent_idle "$ROLE"; then
+            log_anomaly "$ROLE" "telemetry_stale" "" "sidecar ${SC_AGE}s old, agent not idle — possible hang"
+        fi
+        continue
+    fi
+
+    # 3b: Session restart detection
+    SC_SESSION=$(echo "$SC_JSON" | jq -r '.session_id // empty')
+    if [[ -n "$SC_SESSION" ]]; then
+        SESSION_FILE="$STATE_DIR/session-id-${ROLE}.txt"
+        if [[ -f "$SESSION_FILE" ]]; then
+            PREV_SESSION=$(cat "$SESSION_FILE" 2>/dev/null)
+            if [[ "$SC_SESSION" != "$PREV_SESSION" ]]; then
+                echo "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"type\":\"health-action\",\"role\":\"$ROLE\",\"action\":\"session_restart_detected\",\"old_session\":\"$PREV_SESSION\",\"new_session\":\"$SC_SESSION\"}" >> "$LOG_FILE"
+                relay send --from admin "$ROLE" "/rec" || { log_anomaly "$ROLE" "relay_send_failed" "" "/rec after restart"; }
+                echo "$SC_SESSION" > "$SESSION_FILE"
+            fi
+        else
+            echo "$SC_SESSION" > "$SESSION_FILE"
+        fi
+    fi
+
+    # 3c: Cost monitoring
+    SC_COST=$(echo "$SC_JSON" | jq -r '.cost_usd // empty')
+    if [[ -n "$SC_COST" && "$SC_COST" != "null" ]]; then
+        COST_FILE="$STATE_DIR/last-cost-${ROLE}.txt"
+        if [[ -f "$COST_FILE" ]]; then
+            PREV_COST=$(cat "$COST_FILE" 2>/dev/null || echo "0")
+            # Use awk for float comparison
+            COST_DELTA=$(awk "BEGIN { printf \"%.2f\", $SC_COST - $PREV_COST }")
+            IS_SPIKE=$(awk "BEGIN { print ($COST_DELTA > $COST_ALERT_THRESHOLD) ? \"yes\" : \"no\" }")
+            if [[ "$IS_SPIKE" == "yes" ]]; then
+                log_anomaly "$ROLE" "cost_spike" "" "delta \$${COST_DELTA} (threshold \$${COST_ALERT_THRESHOLD}), total \$${SC_COST}"
+            fi
+        fi
+        echo "$SC_COST" > "$COST_FILE"
+    fi
+
+    # 3d: Model drift detection
+    SC_MODEL=$(echo "$SC_JSON" | jq -r '.model_id // empty')
+    if [[ -n "$SC_MODEL" && "$SC_MODEL" != "null" ]]; then
+        EXPECTED_VAR="EXPECTED_MODEL_${ROLE^^}"
+        EXPECTED_MODEL="${!EXPECTED_VAR}"
+        if [[ "$SC_MODEL" != "$EXPECTED_MODEL" ]]; then
+            log_anomaly "$ROLE" "model_drift" "" "expected=$EXPECTED_MODEL actual=$SC_MODEL"
+        fi
     fi
 done
 
