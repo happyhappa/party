@@ -333,11 +333,13 @@ for ROLE in oc cc; do
         COST_FILE="$STATE_DIR/last-cost-${ROLE}.txt"
         if [[ -f "$COST_FILE" ]]; then
             PREV_COST=$(cat "$COST_FILE" 2>/dev/null || echo "0")
-            # Use awk for float comparison
-            COST_DELTA=$(awk "BEGIN { printf \"%.2f\", $SC_COST - $PREV_COST }")
-            IS_SPIKE=$(awk "BEGIN { print ($COST_DELTA > $COST_ALERT_THRESHOLD) ? \"yes\" : \"no\" }")
-            if [[ "$IS_SPIKE" == "yes" ]]; then
-                log_anomaly "$ROLE" "cost_spike" "" "delta \$${COST_DELTA} (threshold \$${COST_ALERT_THRESHOLD}), total \$${SC_COST}"
+            # Validate both values are numeric before passing to awk
+            if [[ "$SC_COST" =~ ^[0-9.]+$ && "$PREV_COST" =~ ^[0-9.]+$ ]]; then
+                COST_DELTA=$(awk "BEGIN { printf \"%.2f\", $SC_COST - $PREV_COST }")
+                IS_SPIKE=$(awk "BEGIN { print ($COST_DELTA > $COST_ALERT_THRESHOLD) ? \"yes\" : \"no\" }")
+                if [[ "$IS_SPIKE" == "yes" ]]; then
+                    log_anomaly "$ROLE" "cost_spike" "" "delta \$${COST_DELTA} (threshold \$${COST_ALERT_THRESHOLD}), total \$${SC_COST}"
+                fi
             fi
         fi
         echo "$SC_COST" > "$COST_FILE"

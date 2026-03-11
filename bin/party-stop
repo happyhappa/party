@@ -270,6 +270,8 @@ log "Cleaning state files..."
 CLEANED=0
 for f in panes.json admin-watchdog.pid relay-daemon.pid admin-watchdog.heartbeat \
          health-hash-oc.txt health-hash-cc.txt health-hash-cx.txt \
+         last-cost-oc.txt last-cost-cc.txt \
+         session-id-oc.txt session-id-cc.txt \
          project-dirs.json brief-worker-pids; do
     if [[ -f "$STATE_DIR/$f" ]]; then
         rm -f "$STATE_DIR/$f"
