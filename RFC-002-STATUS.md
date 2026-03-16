@@ -17,7 +17,7 @@
 - ✅ Commands available (/checkpoint, /restore, /plan, /task)
 
 ### What's Working
-- Automatic checkpoints on session end
+- Automatic pre-compact checkpoints
 - Manual checkpoint creation via /checkpoint
 - Recovery context rendering on session start
 - Beads query and display (bd CLI)
