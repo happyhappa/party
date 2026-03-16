@@ -83,8 +83,16 @@ func ParsePaneState(target, capturedText string) State {
 		footer := CodexFooterVisible(capturedText)
 		out.ContextPct = extractContextPct(capturedText)
 		out.SuggestionActive = hasSuggestionLine(capturedText) && footer
-		out.Ready = strings.HasPrefix(trimmedLast, "›") && !footer
-		out.Idle = footer
+		// The CX statusline ("model · N% used · path · branch") may be the
+		// last non-empty line. Skip it to find the real prompt line.
+		effectiveLast := trimmedLast
+		if strings.Contains(trimmedLast, "·") && !strings.HasPrefix(trimmedLast, "›") {
+			effectiveLast = lastNonEmptyLineSkipping(capturedText, func(line string) bool {
+				return strings.Contains(line, "·")
+			})
+		}
+		out.Ready = strings.HasPrefix(effectiveLast, "›") && !footer
+		out.Idle = footer || (out.Ready && out.ContextPct >= 0)
 		if strings.Contains(strings.ToLower(capturedText), "context compacted") {
 			out.Compacted = true
 			out.CompactedAgoS = extractCompactedAgoSeconds(capturedText, cxCompactRe)
@@ -145,8 +153,9 @@ func ParsePaneStateWithTelemetry(target, capturedText, stateDir string) State {
 }
 
 // CodexFooterVisible returns true when Codex footer metadata is visible.
+// Checks both old "% left" format and new "% used" statusline format.
 func CodexFooterVisible(capturedText string) bool {
-	return strings.Contains(capturedText, "% left ·") || strings.Contains(capturedText, "% context left")
+	return strings.Contains(capturedText, "% left ·") || strings.Contains(capturedText, "% context left") || strings.Contains(capturedText, "% used ·")
 }
 
 // extractContextPct extracts context-used percentage from the CX statusline.
@@ -257,6 +266,20 @@ func lastNonEmptyLine(out string) string {
 		if line != "" {
 			return line
 		}
+	}
+	return ""
+}
+
+// lastNonEmptyLineSkipping returns the last non-empty line that does not
+// match the skip predicate. Used to skip CX statusline when finding prompt.
+func lastNonEmptyLineSkipping(out string, skip func(string) bool) string {
+	lines := strings.Split(out, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" || skip(line) {
+			continue
+		}
+		return line
 	}
 	return ""
 }
