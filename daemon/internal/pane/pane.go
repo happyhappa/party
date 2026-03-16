@@ -92,7 +92,7 @@ func ParsePaneState(target, capturedText string) State {
 			})
 		}
 		out.Ready = strings.HasPrefix(effectiveLast, "›") && !footer
-		out.Idle = footer || (out.Ready && out.ContextPct >= 0)
+		out.Idle = footer || out.Ready
 		if strings.Contains(strings.ToLower(capturedText), "context compacted") {
 			out.Compacted = true
 			out.CompactedAgoS = extractCompactedAgoSeconds(capturedText, cxCompactRe)
@@ -152,10 +152,11 @@ func ParsePaneStateWithTelemetry(target, capturedText, stateDir string) State {
 	return out
 }
 
-// CodexFooterVisible returns true when Codex footer metadata is visible.
-// Checks both old "% left" format and new "% used" statusline format.
+// CodexFooterVisible returns true when the Codex interactive footer is visible.
+// The footer appears when CX is showing results/suggestions (e.g., "84% context left · ? for shortcuts").
+// This must NOT match the statusline ("model · N% used · path · branch") which is always visible.
 func CodexFooterVisible(capturedText string) bool {
-	return strings.Contains(capturedText, "% left ·") || strings.Contains(capturedText, "% context left") || strings.Contains(capturedText, "% used ·")
+	return strings.Contains(capturedText, "% left ·") || strings.Contains(capturedText, "% context left") || strings.Contains(capturedText, "for shortcuts")
 }
 
 // extractContextPct extracts context-used percentage from the CX statusline.

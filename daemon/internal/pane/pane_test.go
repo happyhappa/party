@@ -168,6 +168,22 @@ func TestParsePaneStateCXFalsePositiveUsed(t *testing.T) {
 	}
 }
 
+func TestParsePaneStateCXReadyWithStatusline(t *testing.T) {
+	// CX idle at prompt with statusline as last line — should detect ready
+	// This is the exact format seen in production after switching to context-used
+	captured := "› Find and fix a bug in @filename\n\n  gpt-5.4 default · 0% used · cx-wt · cx-wt"
+	state := ParsePaneState("cx", captured)
+	if !state.Ready {
+		t.Fatalf("expected ready=true when › prompt present with statusline below")
+	}
+	if !state.Idle {
+		t.Fatalf("expected idle=true when ready with context visible")
+	}
+	if state.ContextPct != 0 {
+		t.Fatalf("expected context_pct=0, got %d", state.ContextPct)
+	}
+}
+
 func TestParsePaneStateCXStatuslineOnly(t *testing.T) {
 	// CX idle with only statusline visible (no footer) — statusline is now primary source
 	captured := "some output\n›\n\ngpt-5.3-codex default · 16% used · ~/path"
