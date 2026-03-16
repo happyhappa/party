@@ -85,11 +85,10 @@ func ParsePaneState(target, capturedText string) State {
 		out.SuggestionActive = hasSuggestionLine(capturedText) && footer
 		// The CX statusline ("model · N% used · path · branch") may be the
 		// last non-empty line. Skip it to find the real prompt line.
+		// Only skip lines matching the statusline shape: contains "·" AND "used".
 		effectiveLast := trimmedLast
-		if strings.Contains(trimmedLast, "·") && !strings.HasPrefix(trimmedLast, "›") {
-			effectiveLast = lastNonEmptyLineSkipping(capturedText, func(line string) bool {
-				return strings.Contains(line, "·")
-			})
+		if isCXStatusline(trimmedLast) {
+			effectiveLast = lastNonEmptyLineSkipping(capturedText, isCXStatusline)
 		}
 		out.Ready = strings.HasPrefix(effectiveLast, "›") && !footer
 		out.Idle = footer || out.Ready
@@ -155,8 +154,22 @@ func ParsePaneStateWithTelemetry(target, capturedText, stateDir string) State {
 // CodexFooterVisible returns true when the Codex interactive footer is visible.
 // The footer appears when CX is showing results/suggestions (e.g., "84% context left · ? for shortcuts").
 // This must NOT match the statusline ("model · N% used · path · branch") which is always visible.
+// We check line-by-line: a footer line contains "? for shortcuts" or "% context left" or "% left ·".
 func CodexFooterVisible(capturedText string) bool {
-	return strings.Contains(capturedText, "% left ·") || strings.Contains(capturedText, "% context left") || strings.Contains(capturedText, "for shortcuts")
+	for _, line := range strings.Split(capturedText, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "? for shortcuts") {
+			return true
+		}
+		if strings.Contains(trimmed, "% context left") {
+			return true
+		}
+		// Old short format: "N% left · ?" — must have both % left and · on same line
+		if strings.Contains(trimmed, "% left ·") {
+			return true
+		}
+	}
+	return false
 }
 
 // extractContextPct extracts context-used percentage from the CX statusline.
@@ -269,6 +282,13 @@ func lastNonEmptyLine(out string) string {
 		}
 	}
 	return ""
+}
+
+// isCXStatusline returns true if the line matches the CX statusline shape:
+// "model · N% used · path · branch". Requires both "·" and "used" to avoid
+// matching arbitrary output that happens to contain middle dots.
+func isCXStatusline(line string) bool {
+	return strings.Contains(line, "·") && strings.Contains(line, "used")
 }
 
 // lastNonEmptyLineSkipping returns the last non-empty line that does not
