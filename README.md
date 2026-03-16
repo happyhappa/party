@@ -100,7 +100,7 @@ Commands for managing agent context across sessions (RFC-002):
 /restore
 ```
 
-Checkpoints capture: current goal, key decisions, blockers, and next steps. The system also supports automatic pre-compact and session-end checkpoints via hooks.
+Checkpoints capture: current goal, key decisions, blockers, and next steps. The system also supports automatic pre-compact checkpoints via hooks.
 
 ### Plan Management
 
