@@ -9,5 +9,9 @@ PANE="$1"
 shift
 TEXT="$*"
 tmux send-keys -t "$PANE" -l "$TEXT"
-sleep 1
+CHAR_COUNT=$(printf '%s' "$TEXT" | wc -c)
+EXTRA=$(( CHAR_COUNT / 200 ))
+SLEEP=$(echo "0.5 + $EXTRA * 0.1" | bc)
+[[ $(echo "$SLEEP > 3.0" | bc) -eq 1 ]] && SLEEP=3.0
+sleep "$SLEEP"
 tmux send-keys -t "$PANE" Enter

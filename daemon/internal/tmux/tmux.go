@@ -49,7 +49,14 @@ func (t *Tmux) SendToPane(pane, message string) error {
 		return err
 	}
 
-	time.Sleep(1 * time.Second)
+	delay := 500 * time.Millisecond
+	if len(message) > 200 {
+		delay += time.Duration(len(message)/200) * 100 * time.Millisecond
+	}
+	if delay > 3*time.Second {
+		delay = 3 * time.Second
+	}
+	time.Sleep(delay)
 
 	// Only send Escape if vim mode is enabled (to exit INSERT mode)
 	if vimModeEnabled() {
