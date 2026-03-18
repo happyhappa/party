@@ -28,4 +28,4 @@ relay send all "Checkpoint reached - stand by"
 - **CC (Coder Claude):** Implements features, fixes bugs
 - **CX (Codex):** Quick tasks, research, validation
 
-The relay CLI handles JSON formatting, escaping, and routing automatically.
+The relay CLI handles JSON formatting, escaping, and routing automatically. Messages are binary-safe — backticks, quotes, Go code, JSON, and special characters all work directly in the message string. No need to write to temp files or escape content before sending.
