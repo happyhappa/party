@@ -168,6 +168,40 @@ func TestParsePaneStateCXFalsePositiveUsed(t *testing.T) {
 	}
 }
 
+func TestParsePaneStateCXReadyWithStatusline(t *testing.T) {
+	// CX idle at prompt with statusline as last line — should detect ready
+	// This is the exact format seen in production after switching to context-used
+	captured := "› Find and fix a bug in @filename\n\n  gpt-5.4 default · 0% used · cx-wt · cx-wt"
+	state := ParsePaneState("cx", captured)
+	if !state.Ready {
+		t.Fatalf("expected ready=true when › prompt present with statusline below")
+	}
+	if !state.Idle {
+		t.Fatalf("expected idle=true when ready with context visible")
+	}
+	if state.ContextPct != 0 {
+		t.Fatalf("expected context_pct=0, got %d", state.ContextPct)
+	}
+}
+
+func TestParsePaneStateCXFooterFalsePositive(t *testing.T) {
+	// Output containing "for shortcuts" in normal text should NOT trigger footer detection
+	captured := "Here are tips for shortcuts in vim\n›\n\ngpt-5.4 · 16% used · ~/path · cx-wt"
+	state := ParsePaneState("cx", captured)
+	if !state.Ready {
+		t.Fatalf("expected ready=true — 'for shortcuts' in output should not trigger footer")
+	}
+}
+
+func TestParsePaneStateCXMiddleDotInOutput(t *testing.T) {
+	// Output with · should NOT cause the parser to skip it and find an older › prompt
+	captured := "result: a·b·c\nstill working...\n\ngpt-5.4 · 16% used · ~/path · cx-wt"
+	state := ParsePaneState("cx", captured)
+	if state.Ready {
+		t.Fatalf("expected ready=false — no › prompt visible, middle dots in output should not be skipped")
+	}
+}
+
 func TestParsePaneStateCXStatuslineOnly(t *testing.T) {
 	// CX idle with only statusline visible (no footer) — statusline is now primary source
 	captured := "some output\n›\n\ngpt-5.3-codex default · 16% used · ~/path"

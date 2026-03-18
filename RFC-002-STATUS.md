@@ -11,7 +11,7 @@
 
 ### Deployed Components
 - ✅ Beads storage initialized (.beads/ with SQLite)
-- ✅ Hooks active (PreCompact, SessionEnd, SessionStart)
+- ✅ Hooks active (PreCompact, SessionStart)
 - ✅ Checkpoint creation working (6 checkpoints created today)
 - ✅ Recovery working (tail extraction + checkpoint rendering)
 - ✅ Commands available (/checkpoint, /restore, /plan, /task)
