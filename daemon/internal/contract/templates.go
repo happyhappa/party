@@ -3,6 +3,7 @@ package contract
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"text/template"
 )
 
@@ -101,7 +102,9 @@ func ExpandPaths(c *Contract, vars map[string]string) error {
 			}
 			tool.Sandbox.AllowedWriteDirs[i] = value
 		}
-		if tool.Telemetry.SidecarPath, err = expandTemplate(tool.Telemetry.SidecarPath, varsForRole(vars, "{{.role}}")); err != nil {
+		// SidecarPath uses ${role} for runtime resolution — only expand
+		// build-time {{.var}} templates here, ${role} passes through unchanged.
+		if tool.Telemetry.SidecarPath, err = expandTemplate(tool.Telemetry.SidecarPath, vars); err != nil {
 			return err
 		}
 		for i := range tool.ConfigFiles {
@@ -133,6 +136,15 @@ func ExpandPaths(c *Contract, vars map[string]string) error {
 	}
 
 	return nil
+}
+
+// ExpandRuntimeVars resolves ${key} placeholders that are deferred past
+// build-time template expansion (e.g., ${role} in SidecarPath).
+func ExpandRuntimeVars(s string, vars map[string]string) string {
+	for k, v := range vars {
+		s = strings.ReplaceAll(s, "${"+k+"}", v)
+	}
+	return s
 }
 
 func varsForRole(base map[string]string, role string) map[string]string {

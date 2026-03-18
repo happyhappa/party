@@ -1,6 +1,9 @@
 package contract
 
-import "path/filepath"
+import (
+	"path/filepath"
+	"time"
+)
 
 // DefaultContract returns the default party contract described in RFC-011.
 func DefaultContract(projectRoot, mainDir string) *Contract {
@@ -57,13 +60,13 @@ func DefaultContract(projectRoot, mainDir string) *Contract {
 			},
 		},
 		Thresholds: ThresholdSpec{
-			InjectorBaseDelay:    Duration{Duration: 500000000},
+			InjectorBaseDelay:    Duration{Duration: 500 * time.Millisecond},
 			InjectorCharsPerStep: 200,
-			InjectorDelayPerStep: Duration{Duration: 100000000},
-			InjectorMaxDelay:     Duration{Duration: 3000000000},
-			HealthInterval:       Duration{Duration: 300000000000},
-			IdleThreshold:        Duration{Duration: 300000000000},
-			SidecarMaxAge:        Duration{Duration: 60000000000},
+			InjectorDelayPerStep: Duration{Duration: 100 * time.Millisecond},
+			InjectorMaxDelay:     Duration{Duration: 3 * time.Second},
+			HealthInterval:       Duration{Duration: 5 * time.Minute},
+			IdleThreshold:        Duration{Duration: 5 * time.Minute},
+			SidecarMaxAge:        Duration{Duration: 60 * time.Second},
 		},
 		Tools: map[string]AgentToolSpec{
 			"claude_code": defaultClaudeCodeTool(),
@@ -82,7 +85,7 @@ func defaultClaudeCodeTool() AgentToolSpec {
 		Sandbox: SandboxSpec{Restricted: false},
 		Telemetry: TelemetrySpec{
 			HasSidecar:  true,
-			SidecarPath: "{{.state_dir}}/telemetry-{{.role}}.json",
+			SidecarPath: "{{.state_dir}}/telemetry-${role}.json",
 			IdentityKey: "role",
 			ContextKey:  "context_pct",
 		},
@@ -124,7 +127,7 @@ func defaultClaudeCodeTool() AgentToolSpec {
 			Command:          "/compact",
 			RestoreCommand:   "/rec",
 			ThresholdUsedPct: 75,
-			RecentWindow:     Duration{Duration: 300000000000},
+			RecentWindow:     Duration{Duration: 5 * time.Minute},
 		},
 		Health: ToolHealthSpec{
 			ProcessMatchers: []string{"claude", "node"},
@@ -193,9 +196,9 @@ func defaultCodexTool() AgentToolSpec {
 			SlashCommandMode:    "wrapped",
 			PreInjectActions: []InjectActionSpec{
 				{When: "footer_visible", Action: "send_key", Key: "Space", MaxAttempts: 1},
-				{When: "footer_visible", Action: "sleep", Sleep: Duration{Duration: 200000000}},
+				{When: "footer_visible", Action: "sleep", Sleep: Duration{Duration: 200 * time.Millisecond}},
 				{When: "footer_visible", Action: "send_key", Key: "BSpace", MaxAttempts: 1},
-				{When: "footer_visible", Action: "sleep", Sleep: Duration{Duration: 200000000}},
+				{When: "footer_visible", Action: "sleep", Sleep: Duration{Duration: 200 * time.Millisecond}},
 				{When: "footer_visible", Action: "recapture"},
 			},
 		},
@@ -235,7 +238,7 @@ func defaultCodexTool() AgentToolSpec {
 			Command:          "/compact",
 			RestoreCommand:   "/rec",
 			ThresholdUsedPct: 40,
-			RecentWindow:     Duration{Duration: 120000000000},
+			RecentWindow:     Duration{Duration: 2 * time.Minute},
 		},
 		Health: ToolHealthSpec{
 			ProcessMatchers: []string{"codex", "node"},
