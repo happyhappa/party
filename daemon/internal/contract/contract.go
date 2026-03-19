@@ -122,6 +122,16 @@ type AgentToolSpec struct {
 	PaneParser  PaneParserSpec   `json:"pane_parser"`
 	Compaction  CompactionSpec   `json:"compaction"`
 	Health      ToolHealthSpec   `json:"health"`
+	Recycle     RecycleSpec      `json:"recycle"`
+}
+
+// RecycleSpec configures the kill-restart-hydrate lifecycle for an agent tool.
+type RecycleSpec struct {
+	ThresholdUsedPct int      `json:"threshold_used_pct"` // trigger recycle at this % context used
+	ExitCommand      string   `json:"exit_command"`       // "/exit" for Claude, "ctrl-c" for Codex
+	GracePeriod      Duration `json:"grace_period"`       // max wait for graceful exit (default 30s)
+	BriefCadence     Duration `json:"brief_cadence"`      // continuous brief interval (default 5m)
+	BriefMinDelta    int      `json:"brief_min_delta"`    // min raw JSONL bytes to trigger brief (default 10240)
 }
 
 type CommandSpec struct {

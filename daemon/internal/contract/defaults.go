@@ -132,6 +132,13 @@ func defaultClaudeCodeTool() AgentToolSpec {
 		Health: ToolHealthSpec{
 			ProcessMatchers: []string{"claude", "node"},
 		},
+		Recycle: RecycleSpec{
+			ThresholdUsedPct: 65,
+			ExitCommand:      "/exit",
+			GracePeriod:      Duration{Duration: 30 * time.Second},
+			BriefCadence:     Duration{Duration: 5 * time.Minute},
+			BriefMinDelta:    10240,
+		},
 	}
 }
 
@@ -242,6 +249,13 @@ func defaultCodexTool() AgentToolSpec {
 		},
 		Health: ToolHealthSpec{
 			ProcessMatchers: []string{"codex", "node"},
+		},
+		Recycle: RecycleSpec{
+			ThresholdUsedPct: 30,
+			ExitCommand:      "ctrl-c",
+			GracePeriod:      Duration{Duration: 30 * time.Second},
+			BriefCadence:     Duration{Duration: 5 * time.Minute},
+			BriefMinDelta:    10240,
 		},
 	}
 }
