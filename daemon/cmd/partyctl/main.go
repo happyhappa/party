@@ -28,5 +28,6 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newValidateCmd())
 	cmd.AddCommand(newConfigureCmd())
 	cmd.AddCommand(newPanesCmd())
+	cmd.AddCommand(newHealthCmd())
 	return cmd
 }
