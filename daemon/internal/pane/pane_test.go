@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/norm/relay-daemon/internal/contract"
 )
 
 func TestParsePaneStateCXReady(t *testing.T) {
@@ -211,6 +213,36 @@ func TestParsePaneStateCXStatuslineOnly(t *testing.T) {
 	}
 }
 
+func TestParsePaneStateFromSpecCodexDefaults(t *testing.T) {
+	captured := "› Run /review\n84% context left · ? for shortcuts\n\ngpt-5.3-codex default · 16% used · ~/path · cx-wt"
+	spec := contract.DefaultContract("/tmp/project", "/tmp/main").Tools["codex"].PaneParser
+	state := ParsePaneStateFromSpec(spec, captured)
+	if state.Ready {
+		t.Fatalf("expected ready=false when footer visible")
+	}
+	if !state.SuggestionActive {
+		t.Fatalf("expected suggestion_active=true")
+	}
+	if !state.Idle {
+		t.Fatalf("expected idle=true")
+	}
+	if state.ContextPct != 16 {
+		t.Fatalf("expected context_pct=16, got %d", state.ContextPct)
+	}
+}
+
+func TestParsePaneStateFromSpecClaudeDefaults(t *testing.T) {
+	captured := "some output\n❯ \n──────────────────────────────────\n  ~/Sandbox/personal/new_party/cc-wt | cc-wt | Opus 4.6 | ctx:14%\n  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+	spec := contract.DefaultContract("/tmp/project", "/tmp/main").Tools["claude_code"].PaneParser
+	state := ParsePaneStateFromSpec(spec, captured)
+	if !state.Ready {
+		t.Fatalf("expected ready=true with statusline below prompt, got false")
+	}
+	if !state.Idle {
+		t.Fatalf("expected idle=true with statusline below prompt, got false")
+	}
+}
+
 func writeSidecar(t *testing.T, dir, role string, td *TelemetryData) {
 	t.Helper()
 	data, err := json.Marshal(td)
@@ -412,5 +444,27 @@ func TestParsePaneStateWithTelemetryIdentityMismatch(t *testing.T) {
 	// Data is still overlaid even on mismatch — caller decides what to do
 	if state.ModelID != "claude-opus-4-6" {
 		t.Fatalf("expected model_id to be set even on mismatch, got %s", state.ModelID)
+	}
+}
+
+func TestParsePaneStateWithTelemetryOptionalSpec(t *testing.T) {
+	dir := t.TempDir()
+	td := &TelemetryData{
+		Role:       "cc",
+		Timestamp:  time.Now().Unix(),
+		ContextPct: 22,
+		ModelID:    "claude-opus-4-6",
+	}
+	writeSidecar(t, dir, "cc", td)
+
+	spec := contract.DefaultContract("/tmp/project", "/tmp/main").Tools["claude_code"].PaneParser
+	captured := "work\n❯"
+	state := ParsePaneStateWithTelemetry("cc", captured, dir, spec)
+
+	if !state.Ready {
+		t.Fatalf("expected ready=true")
+	}
+	if state.ContextPct != 22 {
+		t.Fatalf("expected context_pct=22 from sidecar, got %d", state.ContextPct)
 	}
 }

@@ -8,14 +8,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/norm/relay-daemon/internal/contract"
 )
 
-var (
-	contextPctRe    = regexp.MustCompile(`(\d+)%\s*used`)
-	durationAgoRe   = regexp.MustCompile(`(?i)(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s+ago`)
-	cxCompactRe     = regexp.MustCompile(`(?i)context compacted(?:[^0-9]+(\d+\s*(?:seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s+ago))?`)
-	claudeCompactRe = regexp.MustCompile(`(?i)✻\s*conversation compacted(?:[^0-9]+(\d+\s*(?:seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s+ago))?`)
-)
+var durationAgoRe = regexp.MustCompile(`(?i)(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\s+ago`)
 
 // TelemetryData is the sidecar JSON written by the statusline script.
 type TelemetryData struct {
@@ -68,44 +65,49 @@ type State struct {
 }
 
 // ParsePaneState parses pane capture text into normalized pane state.
+// This compatibility wrapper preserves the role-based API for callers that
+// don't have the contract available yet.
 func ParsePaneState(target, capturedText string) State {
-	role := strings.ToLower(strings.TrimSpace(target))
+	return ParsePaneStateFromSpec(defaultSpecForTarget(target), capturedText)
+}
+
+// ParsePaneStateFromSpec parses pane state using a contract-driven parser spec.
+func ParsePaneStateFromSpec(spec contract.PaneParserSpec, capturedText string) State {
+	lines := strings.Split(capturedText, "\n")
 	out := State{
 		ContextPct:    -1,
 		CompactedAgoS: -1,
 	}
 
-	last := lastNonEmptyLine(capturedText)
-	trimmedLast := strings.TrimSpace(last)
+	footerVisible := anyLineMatches(lines, spec.FooterMatchers)
+	out.ContextPct = extractContext(capturedText, spec.ContextExtractors)
+	out.SuggestionActive = anyLineMatches(lines, spec.SuggestionMatchers) && footerVisible
 
-	switch role {
-	case "cx":
-		footer := CodexFooterVisible(capturedText)
-		out.ContextPct = extractContextPct(capturedText)
-		out.SuggestionActive = hasSuggestionLine(capturedText) && footer
-		// The CX statusline ("model · N% used · path · branch") may be the
-		// last non-empty line. Skip it to find the real prompt line.
-		// Only skip lines matching the statusline shape: contains "·" AND "used".
-		effectiveLast := trimmedLast
-		if isCXStatusline(trimmedLast) {
-			effectiveLast = lastNonEmptyLineSkipping(capturedText, isCXStatusline)
-		}
-		out.Ready = strings.HasPrefix(effectiveLast, "›") && !footer
-		out.Idle = footer || out.Ready
-		if strings.Contains(strings.ToLower(capturedText), "context compacted") {
-			out.Compacted = true
-			out.CompactedAgoS = extractCompactedAgoSeconds(capturedText, cxCompactRe)
-		}
+	promptVisible := false
+	switch spec.Strategy {
+	case "separator_scan":
+		promptVisible = promptFromSeparatorScan(lines, spec.PromptPrefixes)
+	case "last_nonempty_skip":
+		promptVisible = promptFromLastNonEmpty(lines, spec.PromptPrefixes, spec.SkipMatchers)
 	default:
-		prompt := hasClaudePrompt(capturedText)
-		out.Ready = prompt
-		out.Idle = prompt
-		if strings.Contains(strings.ToLower(capturedText), "conversation compacted") {
-			out.Compacted = true
-			out.CompactedAgoS = extractCompactedAgoSeconds(capturedText, claudeCompactRe)
-		}
+		promptVisible = promptFromLastNonEmpty(lines, spec.PromptPrefixes, spec.SkipMatchers)
 	}
 
+	switch spec.ReadyPolicy {
+	case "prompt_and_no_footer":
+		out.Ready = promptVisible && !footerVisible
+	default:
+		out.Ready = promptVisible
+	}
+
+	switch spec.IdlePolicy {
+	case "footer_or_prompt":
+		out.Idle = footerVisible || promptVisible
+	default:
+		out.Idle = promptVisible
+	}
+
+	out.Compacted, out.CompactedAgoS = compactedState(capturedText, spec.CompactedMatchers)
 	return out
 }
 
@@ -113,8 +115,13 @@ func ParsePaneState(target, capturedText string) State {
 // telemetry data for CC/OC roles. CX is skipped (no custom statusline script).
 // If the sidecar is missing, stale (>60s), or unparseable, the extra fields
 // are left at zero values and the base terminal-parsed state is returned.
-func ParsePaneStateWithTelemetry(target, capturedText, stateDir string) State {
-	out := ParsePaneState(target, capturedText)
+func ParsePaneStateWithTelemetry(target, capturedText, stateDir string, spec ...contract.PaneParserSpec) State {
+	var out State
+	if len(spec) > 0 {
+		out = ParsePaneStateFromSpec(spec[0], capturedText)
+	} else {
+		out = ParsePaneState(target, capturedText)
+	}
 	role := strings.ToLower(strings.TrimSpace(target))
 
 	// CX has no sidecar — skip
@@ -129,11 +136,9 @@ func ParsePaneStateWithTelemetry(target, capturedText, stateDir string) State {
 
 	age := int(time.Now().Unix() - td.Timestamp)
 	if age > 60 || age < 0 {
-		// Stale or future timestamp — don't trust it
 		return out
 	}
 
-	// Overlay sidecar data
 	if td.ContextPct >= 0 {
 		out.ContextPct = int(td.ContextPct)
 	}
@@ -144,70 +149,191 @@ func ParsePaneStateWithTelemetry(target, capturedText, stateDir string) State {
 	out.TokensOut = td.TokensOut
 	out.TelemetryAge = age
 
-	// Identity verification: sidecar role should match expected role
 	verified := td.Role == role
 	out.IdentityVerified = &verified
 
 	return out
 }
 
-// CodexFooterVisible returns true when the Codex interactive footer is visible.
-// The footer appears when CX is showing results/suggestions (e.g., "84% context left · ? for shortcuts").
-// This must NOT match the statusline ("model · N% used · path · branch") which is always visible.
-// We check line-by-line: a footer line contains "? for shortcuts" or "% context left" or "% left ·".
+// CodexFooterVisible returns true when a pane capture shows the Codex footer.
+// Kept for backwards compatibility with existing callers.
 func CodexFooterVisible(capturedText string) bool {
-	for _, line := range strings.Split(capturedText, "\n") {
+	spec := contract.DefaultContract("/tmp/project", "/tmp/main").Tools["codex"].PaneParser
+	return anyLineMatches(strings.Split(capturedText, "\n"), spec.FooterMatchers)
+}
+
+func defaultSpecForTarget(target string) contract.PaneParserSpec {
+	role := strings.ToLower(strings.TrimSpace(target))
+	defaults := contract.DefaultContract("/tmp/project", "/tmp/main")
+	if role == "cx" {
+		return defaults.Tools["codex"].PaneParser
+	}
+	return defaults.Tools["claude_code"].PaneParser
+}
+
+func matchLine(line string, matcher contract.LineMatcherSpec) bool {
+	switch matcher.MatchType {
+	case "prefix":
+		for _, value := range matcher.Values {
+			if strings.HasPrefix(line, value) {
+				return true
+			}
+		}
+	case "contains_all":
+		for _, value := range matcher.Values {
+			if !strings.Contains(line, value) {
+				return false
+			}
+		}
+		return len(matcher.Values) > 0
+	case "regex":
+		if matcher.Regex == "" {
+			return false
+		}
+		re, err := regexp.Compile(matcher.Regex)
+		if err != nil {
+			return false
+		}
+		return re.MatchString(line)
+	}
+	return false
+}
+
+func matchText(text string, matcher contract.TextMatcherSpec) bool {
+	switch matcher.MatchType {
+	case "contains":
+		return matcher.Value != "" && strings.Contains(strings.ToLower(text), strings.ToLower(matcher.Value))
+	case "regex":
+		if matcher.Value == "" {
+			return false
+		}
+		re, err := regexp.Compile(matcher.Value)
+		if err != nil {
+			return false
+		}
+		return re.MatchString(text)
+	}
+	return false
+}
+
+func extractContext(text string, extractors []contract.ContextExtractSpec) int {
+	lastPct := -1
+	for _, line := range strings.Split(text, "\n") {
+		for _, extractor := range extractors {
+			if !lineMatchesAll(line, extractor.RequireLineMatchers) {
+				continue
+			}
+			re, err := regexp.Compile(extractor.Regex)
+			if err != nil {
+				continue
+			}
+			matches := re.FindStringSubmatch(line)
+			if extractor.ValueGroup <= 0 || extractor.ValueGroup >= len(matches) {
+				continue
+			}
+			pct, err := strconv.Atoi(matches[extractor.ValueGroup])
+			if err != nil {
+				continue
+			}
+			lastPct = pct
+		}
+	}
+	return lastPct
+}
+
+func anyLineMatches(lines []string, matchers []contract.LineMatcherSpec) bool {
+	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.Contains(trimmed, "? for shortcuts") {
-			return true
+		for _, matcher := range matchers {
+			if matchLine(trimmed, matcher) {
+				return true
+			}
 		}
-		if strings.Contains(trimmed, "% context left") {
-			return true
+	}
+	return false
+}
+
+func lineMatchesAll(line string, matchers []contract.LineMatcherSpec) bool {
+	for _, matcher := range matchers {
+		if !matchLine(line, matcher) {
+			return false
 		}
-		// Old short format: "N% left · ?" — must have both % left and · on same line
-		if strings.Contains(trimmed, "% left ·") {
+	}
+	return true
+}
+
+func promptFromSeparatorScan(lines, promptPrefixes []string) bool {
+	sepIdx := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "─") {
+			sepIdx = i
+			break
+		}
+	}
+	limit := len(lines) - 1
+	if sepIdx >= 0 {
+		limit = sepIdx - 1
+	}
+	for i := limit; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
+		}
+		return hasAnyPrefix(trimmed, promptPrefixes)
+	}
+	return false
+}
+
+func promptFromLastNonEmpty(lines, promptPrefixes []string, skipMatchers []contract.LineMatcherSpec) bool {
+	for i := len(lines) - 1; i >= 0; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || lineMatchesAny(trimmed, skipMatchers) {
+			continue
+		}
+		return hasAnyPrefix(trimmed, promptPrefixes)
+	}
+	return false
+}
+
+func lineMatchesAny(line string, matchers []contract.LineMatcherSpec) bool {
+	for _, matcher := range matchers {
+		if matchLine(line, matcher) {
 			return true
 		}
 	}
 	return false
 }
 
-// extractContextPct extracts context-used percentage from the CX statusline.
-// The statusline format is "model · N% used · ~/path · branch".
-// Only matches lines where · appears both before and after "N% used" to avoid
-// false positives from arbitrary output (e.g. "disk 40% used").
-// Returns the value directly as used-percentage (same direction as CC/OC sidecar).
-func extractContextPct(capturedText string) int {
-	lastPct := -1
-	for _, line := range strings.Split(capturedText, "\n") {
-		m := contextPctRe.FindStringSubmatch(line)
-		if len(m) < 2 {
-			continue
+func hasAnyPrefix(line string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(line, prefix) {
+			return true
 		}
-		// Require · both before and after the match (statusline shape).
-		idx := strings.Index(line, m[0])
-		if !strings.Contains(line[:idx], "·") || !strings.Contains(line[idx+len(m[0]):], "·") {
-			continue
-		}
-		pct, err := strconv.Atoi(m[1])
-		if err != nil {
-			continue
-		}
-		lastPct = pct
 	}
-	return lastPct
+	return false
 }
 
-func extractCompactedAgoSeconds(capturedText string, marker *regexp.Regexp) int {
-	if marker == nil {
-		return -1
+func compactedState(text string, matchers []contract.TextMatcherSpec) (bool, int) {
+	lastAgo := -1
+	found := false
+	for _, matcher := range matchers {
+		if !matchText(text, matcher) {
+			continue
+		}
+		found = true
+		for _, line := range strings.Split(text, "\n") {
+			if matchText(line, matcher) {
+				if ago := extractAgoSeconds(line); ago >= 0 {
+					lastAgo = ago
+				}
+			}
+		}
 	}
-	matches := marker.FindAllString(capturedText, -1)
-	if len(matches) == 0 {
-		return -1
-	}
-	last := matches[len(matches)-1]
-	ago := durationAgoRe.FindStringSubmatch(last)
+	return found, lastAgo
+}
+
+func extractAgoSeconds(text string) int {
+	ago := durationAgoRe.FindStringSubmatch(text)
 	if len(ago) < 3 {
 		return -1
 	}
@@ -224,83 +350,4 @@ func extractCompactedAgoSeconds(capturedText string, marker *regexp.Regexp) int 
 	default:
 		return value
 	}
-}
-
-// hasSuggestionLine returns true if any line starts with the › prompt prefix.
-// More precise than strings.Contains — avoids matching › in arbitrary output content.
-func hasSuggestionLine(text string) bool {
-	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "›") {
-			return true
-		}
-	}
-	return false
-}
-
-// hasClaudePrompt scans backwards through captured text looking for the ❯
-// prompt. Skips the entire "footer zone" below the last ─── separator, which
-// may contain the statusline content line and the ⏵⏵ permission bar.
-// If no separator is found, falls back to skipping ⏵ lines only.
-func hasClaudePrompt(capturedText string) bool {
-	lines := strings.Split(capturedText, "\n")
-	// Find the last separator line (scanning backwards)
-	sepIdx := -1
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.HasPrefix(strings.TrimSpace(lines[i]), "─") {
-			sepIdx = i
-			break
-		}
-	}
-	if sepIdx >= 0 {
-		// Skip entire footer zone; scan above separator
-		for i := sepIdx - 1; i >= 0; i-- {
-			trimmed := strings.TrimSpace(lines[i])
-			if trimmed == "" {
-				continue
-			}
-			return strings.HasPrefix(trimmed, "❯")
-		}
-		return false
-	}
-	// No separator found — fall back to skipping ⏵ lines
-	for i := len(lines) - 1; i >= 0; i-- {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" || strings.HasPrefix(trimmed, "⏵") {
-			continue
-		}
-		return strings.HasPrefix(trimmed, "❯")
-	}
-	return false
-}
-
-func lastNonEmptyLine(out string) string {
-	lines := strings.Split(out, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line != "" {
-			return line
-		}
-	}
-	return ""
-}
-
-// isCXStatusline returns true if the line matches the CX statusline shape:
-// "model · N% used · path · branch". Requires both "·" and "used" to avoid
-// matching arbitrary output that happens to contain middle dots.
-func isCXStatusline(line string) bool {
-	return strings.Contains(line, "·") && strings.Contains(line, "used")
-}
-
-// lastNonEmptyLineSkipping returns the last non-empty line that does not
-// match the skip predicate. Used to skip CX statusline when finding prompt.
-func lastNonEmptyLineSkipping(out string, skip func(string) bool) string {
-	lines := strings.Split(out, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" || skip(line) {
-			continue
-		}
-		return line
-	}
-	return ""
 }
