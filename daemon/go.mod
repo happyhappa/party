@@ -11,6 +11,7 @@ require (
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.19.0
+	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/spf13/cobra v1.10.2
 	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
@@ -19,3 +20,4 @@ require (
 )
 
 replace github.com/fsnotify/fsnotify => ./internal/fsnotify
+replace github.com/pelletier/go-toml/v2 => /home/phileas/go/pkg/mod/github.com/pelletier/go-toml/v2@v2.2.4
