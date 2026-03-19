@@ -222,15 +222,16 @@ func getContextPct(cfg watchdogConfig, role contract.RoleSpec, tool contract.Age
 	}
 
 	// Non-sidecar (CX): parse pane text via tmux capture
-	pct, err := readCXContextFromPane(cfg.stateDir, role.Name)
+	pct, err := readContextFromPane(cfg.stateDir, role.Name, tool)
 	if err != nil {
 		return 0, "pane", err
 	}
 	return pct, "pane", nil
 }
 
-// readCXContextFromPane captures a CX pane via tmux and parses context percentage.
-func readCXContextFromPane(stateDir, role string) (int, error) {
+// readContextFromPane captures a pane via tmux and parses context percentage
+// using the contract's PaneParserSpec for the tool.
+func readContextFromPane(stateDir, role string, tool contract.AgentToolSpec) (int, error) {
 	// Read pane ID from panes.json
 	panesPath := filepath.Join(stateDir, "panes.json")
 	data, err := os.ReadFile(panesPath)
@@ -254,8 +255,8 @@ func readCXContextFromPane(stateDir, role string) (int, error) {
 		return 0, fmt.Errorf("tmux capture-pane: %w", err)
 	}
 
-	// Parse using the pane package
-	state := pane.ParsePaneState(role, string(out))
+	// Contract-driven parsing via PaneParserSpec
+	state := pane.ParsePaneStateFromSpec(tool.PaneParser, string(out))
 	if state.ContextPct < 0 {
 		return 0, fmt.Errorf("context percentage not found in pane text")
 	}

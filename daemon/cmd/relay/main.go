@@ -18,6 +18,7 @@ import (
 	"time"
 
 	cfgpkg "github.com/norm/relay-daemon/internal/config"
+	contractpkg "github.com/norm/relay-daemon/internal/contract"
 	inbox "github.com/norm/relay-daemon/internal/inbox"
 	logpkg "github.com/norm/relay-daemon/internal/log"
 	"github.com/norm/relay-daemon/internal/pane"
@@ -858,6 +859,65 @@ func main() {
 	}
 }
 
+// paneStatusContract attempts to load a contract for contract-driven pane parsing.
+// Returns nil if no contract is available (callers fall back to role-name-based parsing).
+func paneStatusContract(stateDir string) *contractpkg.Contract {
+	contractPath := filepath.Join(stateDir, "party-contract.json")
+	c, err := contractpkg.LoadContract(contractPath)
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
+// parsePaneForRole parses pane text using contract-driven parsing if available,
+// falling back to role-name-based parsing.
+func parsePaneForRole(role, capturedText, stateDir string, c *contractpkg.Contract) pane.State {
+	if c != nil {
+		// Find the role's tool spec for contract-driven parsing.
+		// When ParsePaneStateFromSpec is available (CX Phase 4), this
+		// will call it instead of falling through to role-name-based parsing.
+		for _, r := range c.Roles {
+			if r.Name == role {
+				if tool, ok := c.Tools[r.Tool]; ok {
+					st := pane.ParsePaneStateFromSpec(tool.PaneParser, capturedText)
+					// Overlay sidecar telemetry for roles that have it
+					if tool.Telemetry.HasSidecar && stateDir != "" {
+						overlayTelemetry(&st, stateDir, role)
+					}
+					return st
+				}
+			}
+		}
+	}
+	// Fallback: role-name-based parsing
+	return pane.ParsePaneStateWithTelemetry(role, capturedText, stateDir)
+}
+
+// overlayTelemetry applies sidecar telemetry data to a pane state, matching
+// the behavior of ParsePaneStateWithTelemetry for CC/OC roles.
+func overlayTelemetry(st *pane.State, stateDir, role string) {
+	td, err := pane.ReadTelemetrySidecar(stateDir, role)
+	if err != nil || td == nil {
+		return
+	}
+	age := int(time.Now().Unix() - td.Timestamp)
+	if age > 60 || age < 0 {
+		return
+	}
+	if td.ContextPct >= 0 {
+		st.ContextPct = int(td.ContextPct)
+	}
+	st.ModelID = td.ModelID
+	st.SessionID = td.SessionID
+	st.CostUSD = td.CostUSD
+	st.TokensIn = td.TokensIn
+	st.TokensOut = td.TokensOut
+	st.TelemetryAge = age
+	verified := td.Role == role
+	st.IdentityVerified = &verified
+}
+
 func runPaneStatus(args []string) error {
 	if len(args) > 1 {
 		return fmt.Errorf("usage: relay-daemon --pane-status [oc|cc|cx]")
@@ -889,6 +949,9 @@ func runPaneStatus(args []string) error {
 		return fmt.Errorf("read pane map %s: %w", paneMapPath, err)
 	}
 
+	// Try to load contract for contract-driven parsing
+	c := paneStatusContract(stateDir)
+
 	mux := tmuxpkg.New()
 	output := paneStatusOutput{
 		SchemaVersion: paneStatusSchemaVersion,
@@ -904,7 +967,7 @@ func runPaneStatus(args []string) error {
 		if err != nil {
 			return fmt.Errorf("capture pane for %s (%s): %w", roleFilter, paneID, err)
 		}
-		st := pane.ParsePaneStateWithTelemetry(roleFilter, captured, stateDir)
+		st := parsePaneForRole(roleFilter, captured, stateDir, c)
 		if procName, pErr := mux.Run("display-message", "-t", paneID, "-p", "#{pane_current_command}"); pErr == nil {
 			st.ProcessName = strings.TrimSpace(procName)
 		}
@@ -926,7 +989,7 @@ func runPaneStatus(args []string) error {
 			if err != nil {
 				return fmt.Errorf("capture pane for %s (%s): %w", role, paneID, err)
 			}
-			st := pane.ParsePaneStateWithTelemetry(role, captured, stateDir)
+			st := parsePaneForRole(role, captured, stateDir, c)
 			if procName, pErr := mux.Run("display-message", "-t", paneID, "-p", "#{pane_current_command}"); pErr == nil {
 				st.ProcessName = strings.TrimSpace(procName)
 			}
