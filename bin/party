@@ -319,6 +319,21 @@ else
         printf '[tui]\nstatus_line = ["model-with-reasoning", "context-used", "project-root", "git-branch"]\n' > "$CX_CONFIG"
     fi
     log "Locked CX statusline config in $CX_CONFIG (legacy)"
+
+    # Ensure CX shell_environment_policy passes RELAY env vars
+    # (Codex sandbox strips env vars not in include_only)
+    REQUIRED_ENV='["PATH", "HOME", "AGENT_ROLE", "CODEX_HOME", "RELAY_INBOX_DIR", "RELAY_STATE_DIR", "RELAY_LOG_DIR", "RELAY_SHARE_DIR", "RELAY_MAIN_DIR", "RELAY_TMUX_SESSION", "BEADS_DIR"]'
+    if [[ -f "$CX_CONFIG" ]]; then
+        if grep -q '^include_only' "$CX_CONFIG"; then
+            sed -i "s/^include_only = .*/include_only = $REQUIRED_ENV/" "$CX_CONFIG"
+        else
+            # Add shell_environment_policy section if not present
+            if ! grep -q '^\[shell_environment_policy\]' "$CX_CONFIG"; then
+                printf '\n[shell_environment_policy]\ninclude_only = %s\n' "$REQUIRED_ENV" >> "$CX_CONFIG"
+            fi
+        fi
+    fi
+    log "Updated CX shell_environment_policy with RELAY env vars (legacy)"
 fi
 
 # Write project-dirs.json for relay-daemon idle detection (atomic write)

@@ -140,11 +140,36 @@ func applyConfigFile(spec contract.ConfigFileSpec, toolName, backupDir string, d
 		return result, nil
 	}
 
+	// Check if any mutations would actually change the file
+	mutations, err := adapter.DryRun(spec.Mutations)
+	if err != nil {
+		return result, fmt.Errorf("dry run: %w", err)
+	}
+	result.Mutations = mutations
+
+	anyChanged := false
+	for _, m := range mutations {
+		if m.Changed {
+			anyChanged = true
+			break
+		}
+	}
+
+	if !anyChanged && !result.Created {
+		return result, nil
+	}
+
 	// Backup before mutation (to state dir, not adjacent)
 	if !result.Created {
 		if err := backupToStateDir(spec.Path, backupDir); err != nil {
 			return result, fmt.Errorf("backup: %w", err)
 		}
+	}
+
+	// Re-load to get a fresh adapter (DryRun may have mutated internal state)
+	adapter, err = configadapter.LoadFile(spec)
+	if err != nil {
+		return result, fmt.Errorf("reload for apply: %w", err)
 	}
 
 	if err := adapter.Apply(spec.Mutations); err != nil {
@@ -155,7 +180,6 @@ func applyConfigFile(spec contract.ConfigFileSpec, toolName, backupDir string, d
 		return result, fmt.Errorf("write: %w", err)
 	}
 
-	// Re-read to compute what changed
 	result.Changed = true
 	return result, nil
 }
