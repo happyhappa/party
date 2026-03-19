@@ -214,7 +214,7 @@ func storeBriefBead(opts BriefOptions, content string, byteRange [2]int64) (stri
 		fmt.Sprintf("generator:%s", generatorLabel(opts.Generator)),
 	}
 
-	args := []string{"create", "--type", "checkpoint", "--title", title}
+	args := []string{"create", "--type", "session_brief", "--title", title}
 	for _, l := range labels {
 		args = append(args, "--label", l)
 	}
