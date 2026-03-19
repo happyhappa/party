@@ -416,10 +416,10 @@ for pid in $(pgrep -f relay-daemon 2>/dev/null || true); do
         KILLED_STALE=true
     fi
 done
-for pid in $(pgrep -f admin-watchdog.sh 2>/dev/null || true); do
+for pid in $(pgrep -f admin-watchdog.sh 2>/dev/null || true) $(pgrep -f "partyctl watchdog" 2>/dev/null || true); do
     if [[ -f "/proc/$pid/environ" ]] && \
        tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qF "RELAY_STATE_DIR=$RELAY_STATE_DIR"; then
-        log "Killing orphaned admin-watchdog (pid=$pid)"
+        log "Killing orphaned watchdog (pid=$pid)"
         kill "$pid" 2>/dev/null || true
         KILLED_STALE=true
     fi
@@ -438,13 +438,18 @@ else
     err "Relay daemon failed to start — check $RELAY_LOG_DIR/relay.log"
 fi
 
-# Start admin loop as background process
-if [[ -x "$ADMIN_WATCHDOG" ]]; then
+# Start watchdog loop — prefer partyctl watchdog over legacy bash scripts
+if [[ -n "$PARTYCTL_BIN" ]] && "$PARTYCTL_BIN" watchdog --help >/dev/null 2>&1; then
+    setsid "$PARTYCTL_BIN" watchdog --contract-path "$RELAY_STATE_DIR/party-contract.json" \
+        >> "$RELAY_LOG_DIR/watchdog.log" 2>&1 &
+    echo $! > "$ADMIN_PID_FILE"
+    log "Watchdog started via partyctl (pid=$!, log=$RELAY_LOG_DIR/watchdog.log)"
+elif [[ -x "$ADMIN_WATCHDOG" ]]; then
     setsid "$ADMIN_WATCHDOG" >> "$RELAY_LOG_DIR/admin-watchdog.log" 2>&1 &
     echo $! > "$ADMIN_PID_FILE"
-    log "Admin loop started (pid=$!, log=$RELAY_LOG_DIR/admin-watchdog.log)"
+    log "Admin loop started (pid=$!, log=$RELAY_LOG_DIR/admin-watchdog.log) [legacy]"
 else
-    err "Admin loop not found at $ADMIN_WATCHDOG — run install.sh first"
+    err "No watchdog available — run install.sh or build partyctl"
 fi
 
 # Auto-start beads daemon if .beads dir exists
