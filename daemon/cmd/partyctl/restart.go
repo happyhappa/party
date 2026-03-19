@@ -17,6 +17,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	panePIDFunc          = panePID
+	tmuxSendLiteralFunc  = tmuxSendLiteral
+	tmuxSendKeyFunc      = tmuxSendKey
+	sendRelayMessageFunc = sendRelayMessage
+	sendRelayDirectFunc  = sendRelayDirect
+	gracefulKillFunc     = recycle.GracefulKill
+	forceKillPIDFunc     = forceKillPID
+	assembleHydration    = recycle.AssembleHydration
+)
+
 func newRestartCmd() *cobra.Command {
 	var contractPath string
 	var force bool
@@ -67,7 +78,7 @@ func runRestart(cmd *cobra.Command, contractPath, role string, force bool, now t
 		return fmt.Errorf("save exiting state: %w", err)
 	}
 
-	state.RelayAvailable = sendRelayMessage(roleSpec.Name, fmt.Sprintf("%s is recycling, stand by", roleSpec.Name)) == nil
+	state.RelayAvailable = sendRelayMessageFunc(roleSpec.Name, fmt.Sprintf("%s is recycling, stand by", roleSpec.Name)) == nil
 	if err := state.Save(c.Paths.StateDir, roleSpec.Name); err != nil {
 		return fmt.Errorf("save relay state: %w", err)
 	}
@@ -87,13 +98,13 @@ func runRestart(cmd *cobra.Command, contractPath, role string, force bool, now t
 
 	killStart := time.Now()
 	if force {
-		if err := forceKillPID(state.AgentPID); err != nil {
+		if err := forceKillPIDFunc(state.AgentPID); err != nil {
 			_ = state.TransitionFailed(err.Error())
 			_ = state.Save(c.Paths.StateDir, roleSpec.Name)
 			return err
 		}
 	} else {
-		if err := recycle.GracefulKill(state.AgentPID, toolSpec.Recycle.GracePeriod.Duration); err != nil {
+		if err := gracefulKillFunc(state.AgentPID, toolSpec.Recycle.GracePeriod.Duration); err != nil {
 			_ = state.TransitionFailed(err.Error())
 			_ = state.Save(c.Paths.StateDir, roleSpec.Name)
 			return err
@@ -123,7 +134,7 @@ func runRestart(cmd *cobra.Command, contractPath, role string, force bool, now t
 	}
 
 	time.Sleep(1 * time.Second)
-	state.AgentPID = panePID(paneID)
+	state.AgentPID = panePIDFunc(paneID)
 	if state.TranscriptPath == "" {
 		state.TranscriptPath = prevTranscript
 	}
@@ -134,7 +145,7 @@ func runRestart(cmd *cobra.Command, contractPath, role string, force bool, now t
 		return fmt.Errorf("save hydrating state: %w", err)
 	}
 
-	payload, _ := recycle.AssembleHydration(recycle.HydrationOptions{
+	payload, _ := assembleHydration(recycle.HydrationOptions{
 		Role:           roleSpec.Name,
 		PrevSessionID:  prevSessionID,
 		TranscriptPath: prevTranscript,
@@ -142,7 +153,7 @@ func runRestart(cmd *cobra.Command, contractPath, role string, force bool, now t
 		InboxDir:       c.Paths.InboxDir,
 	})
 	if payload != nil {
-		_ = sendRelayDirect(roleSpec.Name, payload.FormatForInjection())
+		_ = sendRelayDirectFunc(roleSpec.Name, payload.FormatForInjection())
 	}
 
 	ackSeen, err := waitForAck(c.Paths.InboxDir, roleSpec.Name, now, 30*time.Second)
@@ -221,23 +232,23 @@ func lookupPaneID(c *contract.Contract, role string) (string, error) {
 func sendExitCommand(paneID, exitCommand string) error {
 	switch exitCommand {
 	case "", "/exit":
-		if err := tmuxSendLiteral(paneID, "/exit"); err != nil {
+		if err := tmuxSendLiteralFunc(paneID, "/exit"); err != nil {
 			return err
 		}
-		return tmuxSendKey(paneID, "Enter")
+		return tmuxSendKeyFunc(paneID, "Enter")
 	case "ctrl-c":
-		if err := tmuxSendKey(paneID, "C-c"); err != nil {
+		if err := tmuxSendKeyFunc(paneID, "C-c"); err != nil {
 			return err
 		}
-		if err := tmuxSendLiteral(paneID, "exit"); err != nil {
+		if err := tmuxSendLiteralFunc(paneID, "exit"); err != nil {
 			return err
 		}
-		return tmuxSendKey(paneID, "Enter")
+		return tmuxSendKeyFunc(paneID, "Enter")
 	default:
-		if err := tmuxSendLiteral(paneID, exitCommand); err != nil {
+		if err := tmuxSendLiteralFunc(paneID, exitCommand); err != nil {
 			return err
 		}
-		return tmuxSendKey(paneID, "Enter")
+		return tmuxSendKeyFunc(paneID, "Enter")
 	}
 }
 
@@ -259,10 +270,10 @@ func forceKillPID(pid int) error {
 
 func relaunchRole(paneID string, c *contract.Contract, role contract.RoleSpec, tool contract.AgentToolSpec) error {
 	command := buildLaunchCommand(c, role, tool)
-	if err := tmuxSendLiteral(paneID, command); err != nil {
+	if err := tmuxSendLiteralFunc(paneID, command); err != nil {
 		return err
 	}
-	return tmuxSendKey(paneID, "Enter")
+	return tmuxSendKeyFunc(paneID, "Enter")
 }
 
 func buildLaunchCommand(c *contract.Contract, role contract.RoleSpec, tool contract.AgentToolSpec) string {
