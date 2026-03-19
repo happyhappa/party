@@ -361,8 +361,12 @@ sleep 3
 PANE_MAP="$RELAY_STATE_DIR/panes.json"
 log "Writing pane map to $PANE_MAP"
 if [[ -n "$PARTYCTL_BIN" ]]; then
-    (cd "$RELAY_MAIN_DIR" && "$PARTYCTL_BIN" panes write \
-        --set-pane "oc=$OC_PANE" --set-pane "cc=$CC_PANE" --set-pane "cx=$CX_PANE")
+    if ! (cd "$RELAY_MAIN_DIR" && "$PARTYCTL_BIN" panes write \
+        --set-pane "oc=$OC_PANE" --set-pane "cc=$CC_PANE" --set-pane "cx=$CX_PANE"); then
+        err "partyctl panes write failed — falling back to manual pane map"
+        printf '{"panes":{"oc":"%s","cc":"%s","cx":"%s"},"version":1,"registered_at":"%s"}\n' \
+            "$OC_PANE" "$CC_PANE" "$CX_PANE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PANE_MAP"
+    fi
 else
     # Fallback: manual pane map (legacy path)
     printf '{"panes":{"oc":"%s","cc":"%s","cx":"%s"},"version":1,"registered_at":"%s"}\n' \

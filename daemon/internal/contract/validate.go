@@ -241,7 +241,7 @@ func validateToolSpecs(c *Contract, r *ValidationResult) {
 		}
 
 		for i, m := range tool.ConfigFiles {
-			validFormats := map[string]bool{"json": true, "toml": true, "yaml": true}
+			validFormats := map[string]bool{"json": true, "toml": true}
 			if m.Format != "" && !validFormats[m.Format] {
 				r.addError(
 					fmt.Sprintf("%s.config_files[%d].format", prefix, i),
