@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #
+# DEPRECATED: Use 'partyctl watchdog' instead. This script is kept as a fallback
+# for one release cycle and will be removed in a future version.
+#
 # admin-watchdog.sh - Admin watchdog loop (health checks + daemon restart)
 #
 # Runs health checks every 5min and restarts relay-daemon if dead.

@@ -1,4 +1,7 @@
 #!/bin/bash
+# DEPRECATED: Use 'partyctl watchdog' instead. This script is kept as a fallback
+# for one release cycle and will be removed in a future version.
+#
 # continuous-brief-loop.sh — Interim continuous brief generator (Phase 2)
 #
 # Runs every BRIEF_CADENCE seconds, checking each active role's JSONL

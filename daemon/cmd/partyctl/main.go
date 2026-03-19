@@ -29,5 +29,6 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newConfigureCmd())
 	cmd.AddCommand(newPanesCmd())
 	cmd.AddCommand(newHealthCmd())
+	cmd.AddCommand(newWatchdogCmd())
 	return cmd
 }

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #
+# DEPRECATED: Use 'partyctl watchdog' instead. This script is kept as a fallback
+# for one release cycle and will be removed in a future version.
+#
 # admin-health-check.sh - Lightweight health check across all agent panes
 #
 # Heuristic checks: process alive, CX footer, error patterns, bare prompt,
