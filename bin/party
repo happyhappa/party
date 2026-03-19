@@ -144,6 +144,35 @@ fi
 mkdir -p "$RELAY_STATE_DIR" "$RELAY_LOG_DIR" "$RELAY_INBOX_DIR"/{oc,cc,cx}
 touch "$RELAY_LOG"
 
+# --- Build/check partyctl binary ---
+PARTYCTL_BIN="$HOME/.local/bin/partyctl"
+PARTYCTL_SRC="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../daemon/cmd/partyctl"
+if [[ -d "$PARTYCTL_SRC" ]]; then
+    log "Building partyctl..."
+    if (cd "$(dirname "$PARTYCTL_SRC")/.." && go build -o "$PARTYCTL_BIN" ./cmd/partyctl); then
+        log "partyctl built at $PARTYCTL_BIN"
+    else
+        err "partyctl build failed — falling back to manual setup"
+        PARTYCTL_BIN=""
+    fi
+else
+    if ! command -v partyctl &>/dev/null; then
+        err "partyctl not found — run install.sh or build daemon/cmd/partyctl"
+        PARTYCTL_BIN=""
+    else
+        PARTYCTL_BIN="$(command -v partyctl)"
+    fi
+fi
+
+# --- Validate contract (partyctl) ---
+if [[ -n "$PARTYCTL_BIN" ]]; then
+    log "Validating contract..."
+    if ! (cd "$RELAY_MAIN_DIR" && "$PARTYCTL_BIN" validate --format human); then
+        err "Contract validation failed — check warnings above"
+        # Non-fatal: validation failures (missing dirs, etc.) may resolve after tmux setup
+    fi
+fi
+
 log "Creating session '$SESSION' with 3-pane layout..."
 
 # Layout:
@@ -252,51 +281,45 @@ OC_CLAUDE_EOF
 fi
 write_claude_md "$CC_DIR"
 
-# --- Deploy Claude Code statusline script for CC/OC ---
-SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../daemon/scripts/statusline"
-STATUSLINE_SRC="$SCRIPT_DIR/claude-statusline.sh"
-STATUSLINE_DST="$HOME/.claude/statusline-command.sh"
-if [[ -f "$STATUSLINE_SRC" ]]; then
-    cp "$STATUSLINE_SRC" "$STATUSLINE_DST"
-    chmod +x "$STATUSLINE_DST"
-    # Ensure settings.json has statusLine config
-    SETTINGS_JSON="$HOME/.claude/settings.json"
-    if [[ -f "$SETTINGS_JSON" ]]; then
-        if ! jq -e '.statusLine' "$SETTINGS_JSON" &>/dev/null; then
-            jq '.statusLine = {"type": "command", "command": "bash ~/.claude/statusline-command.sh"}' \
-                "$SETTINGS_JSON" > "$SETTINGS_JSON.tmp" && mv "$SETTINGS_JSON.tmp" "$SETTINGS_JSON"
-        fi
-    fi
-    log "Deployed statusline script to $STATUSLINE_DST"
-else
-    log "Statusline script not found at $STATUSLINE_SRC — skipping"
-fi
-
-# --- Lock CX statusline config for deterministic parsing ---
-CX_CONFIG="$HOME/.codex/config.toml"
-if [[ -f "$CX_CONFIG" ]]; then
-    # Update existing [tui] section or add it
-    if grep -q '^\[tui\]' "$CX_CONFIG"; then
-        # Replace existing status_line value
-        sed -i 's/^status_line = .*/status_line = ["model-with-reasoning", "context-used", "project-root", "git-branch"]/' "$CX_CONFIG"
+# --- Apply managed tool configuration (partyctl) ---
+if [[ -n "$PARTYCTL_BIN" ]]; then
+    log "Applying tool configuration..."
+    if (cd "$RELAY_MAIN_DIR" && "$PARTYCTL_BIN" configure apply); then
+        log "Tool configuration applied via partyctl"
     else
-        printf '\n[tui]\nstatus_line = ["model-with-reasoning", "context-used", "project-root", "git-branch"]\n' >> "$CX_CONFIG"
+        err "partyctl configure apply failed — check output above"
     fi
 else
-    mkdir -p "$(dirname "$CX_CONFIG")"
-    printf '[tui]\nstatus_line = ["model-with-reasoning", "context-used", "project-root", "git-branch"]\n' > "$CX_CONFIG"
-fi
-log "Locked CX statusline config in $CX_CONFIG"
-
-# --- Ensure CX shell_environment_policy passes RELAY env vars ---
-# Codex sandbox strips env vars not in include_only. We need RELAY_* vars for relay CLI.
-REQUIRED_ENV='["PATH", "HOME", "AGENT_ROLE", "CODEX_HOME", "RELAY_INBOX_DIR", "RELAY_STATE_DIR", "RELAY_LOG_DIR", "RELAY_SHARE_DIR", "RELAY_MAIN_DIR", "RELAY_TMUX_SESSION", "BEADS_DIR"]'
-if [[ -f "$CX_CONFIG" ]]; then
-    if grep -q '^include_only' "$CX_CONFIG"; then
-        sed -i "s/^include_only = .*/include_only = $REQUIRED_ENV/" "$CX_CONFIG"
+    # Fallback: manual config mutation (legacy path)
+    SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../daemon/scripts/statusline"
+    STATUSLINE_SRC="$SCRIPT_DIR/claude-statusline.sh"
+    STATUSLINE_DST="$HOME/.claude/statusline-command.sh"
+    if [[ -f "$STATUSLINE_SRC" ]]; then
+        cp "$STATUSLINE_SRC" "$STATUSLINE_DST"
+        chmod +x "$STATUSLINE_DST"
+        SETTINGS_JSON="$HOME/.claude/settings.json"
+        if [[ -f "$SETTINGS_JSON" ]]; then
+            if ! jq -e '.statusLine' "$SETTINGS_JSON" &>/dev/null; then
+                jq '.statusLine = {"type": "command", "command": "bash ~/.claude/statusline-command.sh"}' \
+                    "$SETTINGS_JSON" > "$SETTINGS_JSON.tmp" && mv "$SETTINGS_JSON.tmp" "$SETTINGS_JSON"
+            fi
+        fi
+        log "Deployed statusline script to $STATUSLINE_DST"
     fi
+
+    CX_CONFIG="$HOME/.codex/config.toml"
+    if [[ -f "$CX_CONFIG" ]]; then
+        if grep -q '^\[tui\]' "$CX_CONFIG"; then
+            sed -i 's/^status_line = .*/status_line = ["model-with-reasoning", "context-used", "project-root", "git-branch"]/' "$CX_CONFIG"
+        else
+            printf '\n[tui]\nstatus_line = ["model-with-reasoning", "context-used", "project-root", "git-branch"]\n' >> "$CX_CONFIG"
+        fi
+    else
+        mkdir -p "$(dirname "$CX_CONFIG")"
+        printf '[tui]\nstatus_line = ["model-with-reasoning", "context-used", "project-root", "git-branch"]\n' > "$CX_CONFIG"
+    fi
+    log "Locked CX statusline config in $CX_CONFIG (legacy)"
 fi
-log "Updated CX shell_environment_policy with RELAY env vars"
 
 # Write project-dirs.json for relay-daemon idle detection (atomic write)
 OC_PROJECT_DIR="$HOME/.claude/projects/$(dir_to_slug "$OC_DIR")"
@@ -334,11 +357,17 @@ log ""
 log "Waiting 3s for shells to initialize..."
 sleep 3
 
-# Write pane map for relay daemon (3 panes, no admin)
+# Write pane map for relay daemon
 PANE_MAP="$RELAY_STATE_DIR/panes.json"
 log "Writing pane map to $PANE_MAP"
-printf '{"panes":{"oc":"%s","cc":"%s","cx":"%s"},"version":1,"registered_at":"%s"}\n' \
-    "$OC_PANE" "$CC_PANE" "$CX_PANE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PANE_MAP"
+if [[ -n "$PARTYCTL_BIN" ]]; then
+    (cd "$RELAY_MAIN_DIR" && "$PARTYCTL_BIN" panes write \
+        --set-pane "oc=$OC_PANE" --set-pane "cc=$CC_PANE" --set-pane "cx=$CX_PANE")
+else
+    # Fallback: manual pane map (legacy path)
+    printf '{"panes":{"oc":"%s","cc":"%s","cx":"%s"},"version":1,"registered_at":"%s"}\n' \
+        "$OC_PANE" "$CC_PANE" "$CX_PANE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PANE_MAP"
+fi
 
 # Force-kill stale processes before starting new ones (two-phase)
 RELAY_PID_FILE="$RELAY_STATE_DIR/relay-daemon.pid"

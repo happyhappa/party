@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/norm/relay-daemon/internal/contract"
@@ -22,19 +23,24 @@ func newPanesCmd() *cobra.Command {
 
 func newPanesWriteCmd() *cobra.Command {
 	var contractPath string
+	var setPanes []string
 
 	cmd := &cobra.Command{
 		Use:   "write",
 		Short: "Write the canonical pane map",
 		Long: `Writes panes.json from the contract's Roles and Layout.
 
-Each role must have a PaneID set (assigned by tmux at startup).
-Produces the v2 pane map format expected by relay-daemon.`,
+Pane IDs can come from the contract or be overridden via --set-pane flags.
+Produces the v2 pane map format expected by relay-daemon.
+
+Examples:
+  partyctl panes write --set-pane oc=%0 --set-pane cc=%1 --set-pane cx=%2`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPanesWrite(cmd, contractPath)
+			return runPanesWrite(cmd, contractPath, setPanes)
 		},
 	}
 	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON")
+	cmd.Flags().StringArrayVar(&setPanes, "set-pane", nil, "override pane ID for a role (role=paneID)")
 	return cmd
 }
 
@@ -45,10 +51,15 @@ type paneMapV2 struct {
 	RegisteredAt string            `json:"registered_at"`
 }
 
-func runPanesWrite(cmd *cobra.Command, contractPath string) error {
+func runPanesWrite(cmd *cobra.Command, contractPath string, setPanes []string) error {
 	c, err := loadOrBuildContract(contractPath)
 	if err != nil {
 		return fmt.Errorf("load contract: %w", err)
+	}
+
+	// Apply --set-pane overrides to contract roles
+	if err := applyPaneOverrides(c, setPanes); err != nil {
+		return err
 	}
 
 	paneMap, err := buildPaneMap(c)
@@ -82,6 +93,31 @@ func runPanesWrite(cmd *cobra.Command, contractPath string) error {
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), ")")
 
+	return nil
+}
+
+// applyPaneOverrides parses "role=paneID" strings and sets PaneID on the
+// matching contract role. This lets bin/party pass tmux-assigned pane IDs
+// without modifying the contract file on disk.
+func applyPaneOverrides(c *contract.Contract, setPanes []string) error {
+	for _, sp := range setPanes {
+		parts := strings.SplitN(sp, "=", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return fmt.Errorf("invalid --set-pane value %q: expected role=paneID", sp)
+		}
+		roleName, paneID := parts[0], parts[1]
+		found := false
+		for i := range c.Roles {
+			if c.Roles[i].Name == roleName {
+				c.Roles[i].PaneID = paneID
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("--set-pane: unknown role %q", roleName)
+		}
+	}
 	return nil
 }
 
