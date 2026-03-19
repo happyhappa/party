@@ -39,6 +39,11 @@ func Validate(c *Contract) *ValidationResult {
 		return r
 	}
 
+	// Schema-level checks first
+	if err := c.ValidateBasic(); err != nil {
+		r.addError("contract", "schema", err.Error())
+	}
+
 	validateBinaries(c, r)
 	validatePaths(c, r)
 	validateConfigFiles(c, r)
@@ -269,6 +274,84 @@ func validateToolSpecs(c *Contract, r *ValidationResult) {
 					prefix+".injection.slash_command_mode",
 					"valid_mode",
 					fmt.Sprintf("unknown slash command mode %q", tool.Injection.SlashCommandMode),
+				)
+			}
+		}
+
+		// Validate mutation value types
+		validValueTypes := map[string]bool{
+			"string": true, "bool": true, "string_array": true, "object": true,
+		}
+		for i, cf := range tool.ConfigFiles {
+			for j, mut := range cf.Mutations {
+				if mut.ValueType != "" && !validValueTypes[mut.ValueType] {
+					r.addError(
+						fmt.Sprintf("%s.config_files[%d].mutations[%d].value_type", prefix, i, j),
+						"valid_value_type",
+						fmt.Sprintf("unknown value type %q", mut.ValueType),
+					)
+				}
+			}
+		}
+
+		// Validate pre-inject action enums
+		validWhen := map[string]bool{
+			"always": true, "footer_visible": true, "suggestion_visible": true, "ready_false": true,
+		}
+		validInjectAction := map[string]bool{
+			"send_key": true, "send_text": true, "sleep": true, "recapture": true,
+		}
+		for i, action := range tool.Injection.PreInjectActions {
+			if action.When != "" && !validWhen[action.When] {
+				r.addError(
+					fmt.Sprintf("%s.injection.pre_inject_actions[%d].when", prefix, i),
+					"valid_when",
+					fmt.Sprintf("unknown inject condition %q", action.When),
+				)
+			}
+			if action.Action != "" && !validInjectAction[action.Action] {
+				r.addError(
+					fmt.Sprintf("%s.injection.pre_inject_actions[%d].action", prefix, i),
+					"valid_inject_action",
+					fmt.Sprintf("unknown inject action %q", action.Action),
+				)
+			}
+		}
+
+		// Validate line matcher match_type enums
+		validMatchType := map[string]bool{
+			"contains_all": true, "prefix": true, "regex": true,
+		}
+		validateLineMatchers := func(matchers []LineMatcherSpec, fieldPath string) {
+			for i, m := range matchers {
+				if m.MatchType != "" && !validMatchType[m.MatchType] {
+					r.addError(
+						fmt.Sprintf("%s[%d].match_type", fieldPath, i),
+						"valid_match_type",
+						fmt.Sprintf("unknown match type %q", m.MatchType),
+					)
+				}
+			}
+		}
+		pp := prefix + ".pane_parser"
+		validateLineMatchers(tool.PaneParser.FooterMatchers, pp+".footer_matchers")
+		validateLineMatchers(tool.PaneParser.StatuslineMatchers, pp+".statusline_matchers")
+		validateLineMatchers(tool.PaneParser.SkipMatchers, pp+".skip_matchers")
+		validateLineMatchers(tool.PaneParser.SuggestionMatchers, pp+".suggestion_matchers")
+		for i, ce := range tool.PaneParser.ContextExtractors {
+			validateLineMatchers(ce.RequireLineMatchers, fmt.Sprintf("%s.context_extractors[%d].require_line_matchers", pp, i))
+		}
+
+		// Validate text matcher match_type enums
+		validTextMatchType := map[string]bool{
+			"contains": true, "regex": true,
+		}
+		for i, m := range tool.PaneParser.CompactedMatchers {
+			if m.MatchType != "" && !validTextMatchType[m.MatchType] {
+				r.addError(
+					fmt.Sprintf("%s.compacted_matchers[%d].match_type", pp, i),
+					"valid_match_type",
+					fmt.Sprintf("unknown text match type %q", m.MatchType),
 				)
 			}
 		}

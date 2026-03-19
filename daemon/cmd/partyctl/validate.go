@@ -3,8 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/norm/relay-daemon/internal/contract"
 	"github.com/spf13/cobra"
@@ -39,8 +37,7 @@ func runValidate(cmd *cobra.Command, contractPath, format string) error {
 		} else {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Failed to load contract: %v\n", err)
 		}
-		os.Exit(2)
-		return nil
+		return &exitError{code: 2}
 	}
 
 	result := contract.Validate(c)
@@ -57,32 +54,7 @@ func runValidate(cmd *cobra.Command, contractPath, format string) error {
 	}
 
 	if !result.Valid {
-		os.Exit(1)
+		return &exitError{code: 1}
 	}
 	return nil
-}
-
-// loadOrBuildContract loads an existing contract from disk or builds one
-// from the environment if no contract file exists.
-func loadOrBuildContract(contractPath string) (*contract.Contract, error) {
-	if contractPath == "" {
-		stateDir := os.Getenv("RELAY_STATE_DIR")
-		if stateDir != "" {
-			contractPath = filepath.Join(stateDir, "party-contract.json")
-		}
-	}
-
-	// Try loading from file first
-	if contractPath != "" {
-		if _, err := os.Stat(contractPath); err == nil {
-			return contract.LoadContract(contractPath)
-		}
-	}
-
-	// Fall back to building from environment
-	return contract.BuildContract(contract.InitOptions{
-		StateDir: os.Getenv("RELAY_STATE_DIR"),
-		ShareDir: os.Getenv("RELAY_SHARE_DIR"),
-		MainDir:  os.Getenv("RELAY_MAIN_DIR"),
-	})
 }
