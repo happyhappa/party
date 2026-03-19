@@ -31,9 +31,10 @@ func (jsonCodec) encode(doc map[string]interface{}) ([]byte, error) {
 type tomlCodec struct{}
 
 func newTOMLAdapter() ConfigAdapter {
+	// backupOnApply is false — backup responsibility belongs to the caller
+	// (configure.go's backupToStateDir writes to $RELAY_STATE_DIR/config-backups/).
 	return &baseAdapter{
-		codec:         tomlCodec{},
-		backupOnApply: true,
+		codec: tomlCodec{},
 	}
 }
 

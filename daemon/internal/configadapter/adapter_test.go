@@ -261,16 +261,14 @@ func TestLoadFileMissingRequiredReturnsError(t *testing.T) {
 	}
 }
 
-func TestTOMLApplyCreatesBackupBeforeMutation(t *testing.T) {
+func TestTOMLApplyDoesNotCreateAdjacentBackup(t *testing.T) {
+	// Backup responsibility belongs to the caller (configure.go's backupToStateDir),
+	// not the adapter. The adapter should not create adjacent .bak files.
 	path := writeFixture(t, "toml", map[string]interface{}{
 		"telemetry": map[string]interface{}{
 			"context_key": "old",
 		},
 	})
-	original, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile original: %v", err)
-	}
 
 	adapter := mustLoadAdapter(t, "toml", path)
 	if err := adapter.Apply([]contract.ConfigMutationSpec{{
@@ -283,12 +281,8 @@ func TestTOMLApplyCreatesBackupBeforeMutation(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 
-	backup, err := os.ReadFile(path + ".bak")
-	if err != nil {
-		t.Fatalf("ReadFile backup: %v", err)
-	}
-	if string(backup) != string(original) {
-		t.Fatal("backup contents differ from original")
+	if _, err := os.Stat(path + ".bak"); err == nil {
+		t.Fatal("adapter should not create adjacent .bak file — backup is caller's responsibility")
 	}
 }
 
