@@ -78,11 +78,21 @@ func runConfigureApply(cmd *cobra.Command, contractPath string, dryRun bool, for
 	}
 
 	var results []fileResult
+	var writtenPaths []string
 
 	for _, job := range jobs {
 		result, err := applyConfigFile(job.spec, job.toolName, backupDir, dryRun)
 		if err != nil {
+			// Rollback: restore previously written files from backups
+			for _, wp := range writtenPaths {
+				if restoreErr := restoreFromBackup(wp, backupDir); restoreErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "rollback failed for %s: %v\n", wp, restoreErr)
+				}
+			}
 			return fmt.Errorf("config %s (%s): %w", job.spec.Name, job.spec.Path, err)
+		}
+		if result.Changed && !dryRun {
+			writtenPaths = append(writtenPaths, job.spec.Path)
 		}
 		results = append(results, result)
 	}
@@ -184,6 +194,17 @@ func applyConfigFile(spec contract.ConfigFileSpec, toolName, backupDir string, d
 	return result, nil
 }
 
+// backupName returns the backup path for a config file, using the full path
+// with slashes replaced to avoid collisions between files with the same basename
+// in different directories (e.g., ~/.claude/settings.json vs ~/.codex/settings.json).
+func backupName(filePath, backupDir string) string {
+	// Use full absolute path with separators replaced: /home/user/.claude/settings.json -> home-user-.claude-settings.json.bak
+	clean := filepath.Clean(filePath)
+	clean = strings.TrimPrefix(clean, string(filepath.Separator))
+	safe := strings.ReplaceAll(clean, string(filepath.Separator), "-")
+	return filepath.Join(backupDir, safe+".bak")
+}
+
 // backupToStateDir copies a config file to $RELAY_STATE_DIR/config-backups/
 // if a backup doesn't already exist.
 func backupToStateDir(filePath, backupDir string) error {
@@ -191,8 +212,7 @@ func backupToStateDir(filePath, backupDir string) error {
 		return fmt.Errorf("create backup dir: %w", err)
 	}
 
-	// Use the base filename as the backup name
-	backupPath := filepath.Join(backupDir, filepath.Base(filePath)+".bak")
+	backupPath := backupName(filePath, backupDir)
 
 	// Skip if backup already exists (idempotent)
 	if _, err := os.Stat(backupPath); err == nil {
@@ -209,6 +229,20 @@ func backupToStateDir(filePath, backupDir string) error {
 		return err
 	}
 	return os.Rename(tmp, backupPath)
+}
+
+// restoreFromBackup copies a backup file back to the original path.
+// Used for rollback when a later config file fails during apply.
+func restoreFromBackup(filePath, backupDir string) error {
+	backupPath := backupName(filePath, backupDir)
+	data, err := os.ReadFile(backupPath)
+	if err != nil {
+		return fmt.Errorf("read backup %q: %w", backupPath, err)
+	}
+	if err := os.WriteFile(filePath, data, 0o644); err != nil {
+		return fmt.Errorf("restore %q: %w", filePath, err)
+	}
+	return nil
 }
 
 // hasComments checks if a file contains lines starting with # (TOML comments).
