@@ -174,7 +174,7 @@ func runCodexExec(prompt string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("codex not found: %w", err)
 	}
-	cmd := exec.Command(codexPath, "exec", "-p", prompt)
+	cmd := exec.Command(codexPath, "exec", prompt)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("codex exec: %w", err)
