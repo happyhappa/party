@@ -78,3 +78,22 @@ func TestBuildContractExpandsTemplates(t *testing.T) {
 		t.Fatalf("session name not expanded: %q", c.Session.Name)
 	}
 }
+
+func TestBuildContractWorktreePaths(t *testing.T) {
+	c, err := BuildContract(InitOptions{
+		MainDir: "/tmp/test-party/main",
+	})
+	if err != nil {
+		t.Fatalf("BuildContract: %v", err)
+	}
+	roles := map[string]string{}
+	for _, role := range c.Roles {
+		roles[role.Name] = role.WorktreeDir
+	}
+	if got, want := roles["cc"], "/tmp/test-party/cc-wt"; got != want {
+		t.Fatalf("cc worktree = %q, want %q", got, want)
+	}
+	if got, want := roles["cx"], "/tmp/test-party/cx-wt"; got != want {
+		t.Fatalf("cx worktree = %q, want %q", got, want)
+	}
+}
