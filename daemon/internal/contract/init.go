@@ -26,6 +26,8 @@ func BuildContract(opts InitOptions) (*Contract, error) {
 	mainDir := opts.MainDir
 	if strings.TrimSpace(mainDir) == "" {
 		mainDir = filepath.Join(projectRoot, "main")
+	} else if strings.TrimSpace(opts.ProjectRoot) == "" {
+		projectRoot = filepath.Dir(mainDir)
 	}
 	shareDir := opts.ShareDir
 	if strings.TrimSpace(shareDir) == "" {
