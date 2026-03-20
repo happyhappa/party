@@ -21,6 +21,9 @@ var (
 	panePIDFunc          = panePID
 	tmuxSendLiteralFunc  = tmuxSendLiteral
 	tmuxSendKeyFunc      = tmuxSendKey
+	tmuxSetOptionFunc    = tmuxSetOption
+	tmuxRespawnPaneFunc  = tmuxRespawnPane
+	isPaneDeadFunc       = isPaneDead
 	sendRelayMessageFunc = sendRelayMessage
 	sendRelayDirectFunc  = sendRelayDirect
 	gracefulKillFunc     = recycle.GracefulKill
@@ -82,6 +85,9 @@ func runRestart(cmd *cobra.Command, contractPath, role string, force bool, now t
 	if err := state.Save(c.Paths.StateDir, roleSpec.Name); err != nil {
 		return fmt.Errorf("save relay state: %w", err)
 	}
+
+	// Preserve pane on process exit so pane ID survives for relaunch
+	_ = tmuxSetOptionFunc(paneID, "remain-on-exit", "on")
 
 	if !force {
 		if err := sendExitCommand(paneID, toolSpec.Recycle.ExitCommand); err != nil {
@@ -269,6 +275,15 @@ func forceKillPID(pid int) error {
 }
 
 func relaunchRole(paneID string, c *contract.Contract, role contract.RoleSpec, tool contract.AgentToolSpec) error {
+	// If the pane is dead ([exited] state from remain-on-exit), respawn it first
+	if isPaneDeadFunc(paneID) {
+		if err := tmuxRespawnPaneFunc(paneID); err != nil {
+			return fmt.Errorf("respawn dead pane %s: %w", paneID, err)
+		}
+		// Brief pause for shell init after respawn
+		time.Sleep(300 * time.Millisecond)
+	}
+
 	command := buildLaunchCommand(c, role, tool)
 	if err := tmuxSendLiteralFunc(paneID, command); err != nil {
 		return err
@@ -407,6 +422,22 @@ func sortedKeys(m map[string]string) []string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+func tmuxSetOption(paneID, option, value string) error {
+	return exec.Command("tmux", "set-option", "-p", "-t", paneID, option, value).Run()
+}
+
+func isPaneDead(paneID string) bool {
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", paneID, "#{pane_dead}").Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "1"
+}
+
+func tmuxRespawnPane(paneID string) error {
+	return exec.Command("tmux", "respawn-pane", "-t", paneID, "-k").Run()
 }
 
 func execLookPath(name string) (string, error) {

@@ -48,6 +48,9 @@ func runStop(cmd *cobra.Command, contractPath, role string, force bool, now time
 	}
 
 	if state.AgentPID > 0 {
+		// Preserve pane on process exit so pane ID survives for later start
+		_ = tmuxSetOptionFunc(paneID, "remain-on-exit", "on")
+
 		if !force {
 			if err := sendExitCommand(paneID, toolSpec.Recycle.ExitCommand); err != nil {
 				return fmt.Errorf("send exit command: %w", err)

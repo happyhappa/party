@@ -179,21 +179,237 @@ func stubLifecycleFuncs() func() {
 	oldPanePID := panePIDFunc
 	oldSendLiteral := tmuxSendLiteralFunc
 	oldSendKey := tmuxSendKeyFunc
+	oldSetOption := tmuxSetOptionFunc
+	oldRespawnPane := tmuxRespawnPaneFunc
+	oldIsPaneDead := isPaneDeadFunc
 	oldSendRelayMessage := sendRelayMessageFunc
 	oldSendRelayDirect := sendRelayDirectFunc
 	oldGracefulKill := gracefulKillFunc
 	oldForceKill := forceKillPIDFunc
 	oldAssembleHydration := assembleHydration
 
+	// Default stubs for new funcs
+	tmuxSetOptionFunc = func(paneID, option, value string) error { return nil }
+	tmuxRespawnPaneFunc = func(paneID string) error { return nil }
+	isPaneDeadFunc = func(paneID string) bool { return false }
+
 	return func() {
 		panePIDFunc = oldPanePID
 		tmuxSendLiteralFunc = oldSendLiteral
 		tmuxSendKeyFunc = oldSendKey
+		tmuxSetOptionFunc = oldSetOption
+		tmuxRespawnPaneFunc = oldRespawnPane
+		isPaneDeadFunc = oldIsPaneDead
 		sendRelayMessageFunc = oldSendRelayMessage
 		sendRelayDirectFunc = oldSendRelayDirect
 		gracefulKillFunc = oldGracefulKill
 		forceKillPIDFunc = oldForceKill
 		assembleHydration = oldAssembleHydration
+	}
+}
+
+func TestStopSetsRemainOnExit(t *testing.T) {
+	restore := stubLifecycleFuncs()
+	defer restore()
+
+	var setOptions []string
+	tmuxSetOptionFunc = func(paneID, option, value string) error {
+		setOptions = append(setOptions, paneID+"|"+option+"="+value)
+		return nil
+	}
+	tmuxSendLiteralFunc = func(paneID, text string) error { return nil }
+	tmuxSendKeyFunc = func(paneID, key string) error { return nil }
+	gracefulKillFunc = func(pid int, grace time.Duration) error { return nil }
+
+	dir := t.TempDir()
+	contractPath := writePartyctlContract(t, dir, contract.RoleSpec{Name: "cc", Tool: "claude_code", PaneID: "%2"})
+	state := &recycle.RecycleState{
+		State:     recycle.StateReady,
+		EnteredAt: time.Now().UTC(),
+		AgentPID:  555,
+	}
+	if err := state.Save(dir, "cc"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"stop", "cc", "--contract-path", contractPath})
+	out := new(strings.Builder)
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if len(setOptions) == 0 {
+		t.Fatal("expected tmuxSetOption to be called for remain-on-exit")
+	}
+	if setOptions[0] != "%2|remain-on-exit=on" {
+		t.Fatalf("setOptions = %v, want %%2|remain-on-exit=on", setOptions)
+	}
+}
+
+func TestStartRespawnsDeadPane(t *testing.T) {
+	restore := stubLifecycleFuncs()
+	defer restore()
+
+	var respawned []string
+	var sent []string
+	isPaneDeadFunc = func(paneID string) bool {
+		return true // simulate dead pane
+	}
+	tmuxRespawnPaneFunc = func(paneID string) error {
+		respawned = append(respawned, paneID)
+		return nil
+	}
+	tmuxSendLiteralFunc = func(paneID, text string) error {
+		sent = append(sent, paneID+"|literal|"+text)
+		return nil
+	}
+	tmuxSendKeyFunc = func(paneID, key string) error {
+		sent = append(sent, paneID+"|key|"+key)
+		return nil
+	}
+	panePIDFunc = func(paneID string) int { return 8888 }
+
+	dir := t.TempDir()
+	contractPath := writePartyctlContract(t, dir, contract.RoleSpec{Name: "cx", Tool: "codex", PaneID: "%5"})
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"start", "cx", "--contract-path", contractPath})
+	out := new(strings.Builder)
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if len(respawned) != 1 || respawned[0] != "%5" {
+		t.Fatalf("expected respawn of %%5, got %v", respawned)
+	}
+	if len(sent) < 2 {
+		t.Fatalf("expected launch commands after respawn, got %v", sent)
+	}
+	if !strings.Contains(out.String(), "Started cx (pane %5, pid 8888)") {
+		t.Fatalf("unexpected output: %q", out.String())
+	}
+}
+
+func TestStartAlivePane_NoRespawn(t *testing.T) {
+	restore := stubLifecycleFuncs()
+	defer restore()
+
+	var respawned []string
+	isPaneDeadFunc = func(paneID string) bool {
+		return false // pane is alive
+	}
+	tmuxRespawnPaneFunc = func(paneID string) error {
+		respawned = append(respawned, paneID)
+		return nil
+	}
+	tmuxSendLiteralFunc = func(paneID, text string) error { return nil }
+	tmuxSendKeyFunc = func(paneID, key string) error { return nil }
+	panePIDFunc = func(paneID string) int { return 7777 }
+
+	dir := t.TempDir()
+	contractPath := writePartyctlContract(t, dir, contract.RoleSpec{Name: "cc", Tool: "claude_code", PaneID: "%3"})
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"start", "cc", "--contract-path", contractPath})
+	out := new(strings.Builder)
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if len(respawned) != 0 {
+		t.Fatalf("should not respawn alive pane, got %v", respawned)
+	}
+}
+
+func TestRestartSetsRemainOnExitAndRespawns(t *testing.T) {
+	restore := stubLifecycleFuncs()
+	defer restore()
+
+	var setOptions []string
+	var respawned []string
+	tmuxSetOptionFunc = func(paneID, option, value string) error {
+		setOptions = append(setOptions, paneID+"|"+option+"="+value)
+		return nil
+	}
+	// After kill, the pane becomes dead
+	killDone := false
+	isPaneDeadFunc = func(paneID string) bool {
+		return killDone
+	}
+	tmuxRespawnPaneFunc = func(paneID string) error {
+		respawned = append(respawned, paneID)
+		return nil
+	}
+	tmuxSendLiteralFunc = func(paneID, text string) error { return nil }
+	tmuxSendKeyFunc = func(paneID, key string) error { return nil }
+	sendRelayMessageFunc = func(role, body string) error { return nil }
+	gracefulKillFunc = func(pid int, grace time.Duration) error {
+		killDone = true
+		return nil
+	}
+	panePIDFunc = func(paneID string) int { return 9999 }
+	assembleHydration = func(opts recycle.HydrationOptions) (*recycle.HydrationPayload, error) {
+		return nil, nil
+	}
+	sendRelayDirectFunc = func(role, body string) error { return nil }
+
+	dir := t.TempDir()
+	ackDir := filepath.Join(dir, "inbox", "oc")
+	os.MkdirAll(ackDir, 0o755)
+	contractPath := writePartyctlContract(t, dir, contract.RoleSpec{Name: "oc", Tool: "claude_code", PaneID: "%1"})
+
+	// Write ACK message after a short delay so its ModTime is after the command's start time
+	go func() {
+		time.Sleep(2 * time.Second)
+		os.WriteFile(filepath.Join(ackDir, "001.msg"), []byte("oc back online"), 0o644)
+	}()
+
+	state := &recycle.RecycleState{
+		State:     recycle.StateReady,
+		EnteredAt: time.Now().UTC(),
+		AgentPID:  1234,
+	}
+	if err := state.Save(dir, "oc"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newRootCmd()
+	cmd.SetArgs([]string{"restart", "oc", "--contract-path", contractPath})
+	out := new(strings.Builder)
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	// Verify remain-on-exit was set
+	if len(setOptions) == 0 {
+		t.Fatal("expected remain-on-exit to be set")
+	}
+	found := false
+	for _, opt := range setOptions {
+		if opt == "%1|remain-on-exit=on" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("remain-on-exit not set for %%1, got %v", setOptions)
+	}
+
+	// Verify dead pane was respawned
+	if len(respawned) != 1 || respawned[0] != "%1" {
+		t.Fatalf("expected respawn of %%1, got %v", respawned)
 	}
 }
 
