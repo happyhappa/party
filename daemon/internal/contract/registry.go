@@ -111,7 +111,9 @@ func FindContractPath(opts FindOptions) (string, error) {
 			}
 			return "", err
 		}
-		return entry.ContractPath, nil
+		if contractPathExists(entry.ContractPath) {
+			return entry.ContractPath, nil
+		}
 	}
 
 	entries, err := ListSessions()
@@ -119,9 +121,15 @@ func FindContractPath(opts FindOptions) (string, error) {
 		return "", err
 	}
 	if len(entries) > 0 {
+		validEntries := make([]RegistryEntry, 0, len(entries))
+		for _, entry := range entries {
+			if contractPathExists(entry.ContractPath) {
+				validEntries = append(validEntries, entry)
+			}
+		}
 		if strings.TrimSpace(opts.CWD) != "" {
-			matches := make([]RegistryEntry, 0, len(entries))
-			for _, entry := range entries {
+			matches := make([]RegistryEntry, 0, len(validEntries))
+			for _, entry := range validEntries {
 				if cwdWithinRoot(entry.ProjectRoot, opts.CWD) {
 					matches = append(matches, entry)
 				}
@@ -136,11 +144,19 @@ func FindContractPath(opts FindOptions) (string, error) {
 				return matches[0].ContractPath, nil
 			}
 		}
-		if len(entries) == 1 {
-			return entries[0].ContractPath, nil
+		if strings.TrimSpace(opts.CWD) != "" {
+			if path, ok := findContractByWalkUp(opts.CWD); ok {
+				return path, nil
+			}
 		}
-		names := make([]string, 0, len(entries))
-		for _, entry := range entries {
+		if len(validEntries) == 1 {
+			return validEntries[0].ContractPath, nil
+		}
+		if len(validEntries) == 0 {
+			return "", nil
+		}
+		names := make([]string, 0, len(validEntries))
+		for _, entry := range validEntries {
 			names = append(names, entry.ProjectName)
 		}
 		return "", fmt.Errorf("multiple registered projects found; specify --project (%s)", strings.Join(names, ", "))
@@ -238,4 +254,14 @@ func canonicalPath(path string) (string, error) {
 		return resolved, nil
 	}
 	return filepath.Clean(abs), nil
+}
+
+func contractPathExists(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	if _, err := os.Stat(path); err == nil {
+		return true
+	}
+	return false
 }

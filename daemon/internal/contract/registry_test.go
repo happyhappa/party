@@ -110,11 +110,13 @@ func TestFindByRelayStateDir(t *testing.T) {
 func TestFindByProjectName(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
+	projectRoot := t.TempDir()
+	contractPath := writeRegistryContractFile(t, projectRoot)
 
 	if err := RegisterSession(RegistryEntry{
 		ProjectName:  "demo",
-		ContractPath: "/tmp/demo/party-contract.json",
-		ProjectRoot:  "/tmp/demo",
+		ContractPath: contractPath,
+		ProjectRoot:  projectRoot,
 	}); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
 	}
@@ -125,7 +127,7 @@ func TestFindByProjectName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindContractPath: %v", err)
 	}
-	if want := "/tmp/demo/party-contract.json"; got != want {
+	if want := contractPath; got != want {
 		t.Fatalf("path = %q, want %q", got, want)
 	}
 }
@@ -139,9 +141,10 @@ func TestFindByCWD(t *testing.T) {
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
+	contractPath := writeRegistryContractFile(t, projectRoot)
 	if err := RegisterSession(RegistryEntry{
 		ProjectName:  "demo",
-		ContractPath: "/tmp/demo/party-contract.json",
+		ContractPath: contractPath,
 		ProjectRoot:  projectRoot,
 	}); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
@@ -151,7 +154,7 @@ func TestFindByCWD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindContractPath: %v", err)
 	}
-	if want := "/tmp/demo/party-contract.json"; got != want {
+	if want := contractPath; got != want {
 		t.Fatalf("path = %q, want %q", got, want)
 	}
 }
@@ -167,9 +170,11 @@ func TestFindByCWDDeepestRoot(t *testing.T) {
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
+	contractPathA := writeRegistryContractFile(t, rootA)
+	contractPathB := writeRegistryContractFile(t, rootB)
 	for _, entry := range []RegistryEntry{
-		{ProjectName: "a", ContractPath: "/tmp/a/party-contract.json", ProjectRoot: rootA},
-		{ProjectName: "b", ContractPath: "/tmp/b/party-contract.json", ProjectRoot: rootB},
+		{ProjectName: "a", ContractPath: contractPathA, ProjectRoot: rootA},
+		{ProjectName: "b", ContractPath: contractPathB, ProjectRoot: rootB},
 	} {
 		if err := RegisterSession(entry); err != nil {
 			t.Fatalf("RegisterSession %s: %v", entry.ProjectName, err)
@@ -180,7 +185,7 @@ func TestFindByCWDDeepestRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindContractPath: %v", err)
 	}
-	if want := "/tmp/b/party-contract.json"; got != want {
+	if want := contractPathB; got != want {
 		t.Fatalf("path = %q, want %q", got, want)
 	}
 }
@@ -188,11 +193,13 @@ func TestFindByCWDDeepestRoot(t *testing.T) {
 func TestFindSingleSession(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
+	projectRoot := t.TempDir()
+	contractPath := writeRegistryContractFile(t, projectRoot)
 
 	if err := RegisterSession(RegistryEntry{
 		ProjectName:  "solo",
-		ContractPath: "/tmp/solo/party-contract.json",
-		ProjectRoot:  "/tmp/solo",
+		ContractPath: contractPath,
+		ProjectRoot:  projectRoot,
 	}); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
 	}
@@ -201,7 +208,7 @@ func TestFindSingleSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindContractPath: %v", err)
 	}
-	if want := "/tmp/solo/party-contract.json"; got != want {
+	if want := contractPath; got != want {
 		t.Fatalf("path = %q, want %q", got, want)
 	}
 }
@@ -210,9 +217,11 @@ func TestFindMultipleNoMatch(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 
+	alphaRoot := t.TempDir()
+	betaRoot := t.TempDir()
 	for _, entry := range []RegistryEntry{
-		{ProjectName: "alpha", ContractPath: "/tmp/alpha/party-contract.json", ProjectRoot: "/tmp/alpha"},
-		{ProjectName: "beta", ContractPath: "/tmp/beta/party-contract.json", ProjectRoot: "/tmp/beta"},
+		{ProjectName: "alpha", ContractPath: writeRegistryContractFile(t, alphaRoot), ProjectRoot: alphaRoot},
+		{ProjectName: "beta", ContractPath: writeRegistryContractFile(t, betaRoot), ProjectRoot: betaRoot},
 	} {
 		if err := RegisterSession(entry); err != nil {
 			t.Fatalf("RegisterSession %s: %v", entry.ProjectName, err)
@@ -226,6 +235,89 @@ func TestFindMultipleNoMatch(t *testing.T) {
 	if !strings.Contains(err.Error(), "alpha") || !strings.Contains(err.Error(), "beta") {
 		t.Fatalf("error = %q, want listed projects", err.Error())
 	}
+}
+
+func TestFindWalkUpWithMultipleRegisteredProjects(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	for _, entry := range []RegistryEntry{
+		{ProjectName: "alpha", ContractPath: "/tmp/alpha/party-contract.json", ProjectRoot: "/tmp/alpha"},
+		{ProjectName: "beta", ContractPath: "/tmp/beta/party-contract.json", ProjectRoot: "/tmp/beta"},
+	} {
+		if err := RegisterSession(entry); err != nil {
+			t.Fatalf("RegisterSession %s: %v", entry.ProjectName, err)
+		}
+	}
+
+	projectRoot := t.TempDir()
+	stateDir := filepath.Join(projectRoot, ".relay", "state")
+	cwd := filepath.Join(projectRoot, "cx-wt", "subdir")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll stateDir: %v", err)
+	}
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("MkdirAll cwd: %v", err)
+	}
+	contractPath := filepath.Join(stateDir, "party-contract.json")
+	if err := os.WriteFile(contractPath, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	got, err := FindContractPath(FindOptions{CWD: cwd})
+	if err != nil {
+		t.Fatalf("FindContractPath: %v", err)
+	}
+	if got != contractPath {
+		t.Fatalf("path = %q, want %q", got, contractPath)
+	}
+}
+
+func TestFindSkipsStaleRegistryEntry(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	projectRoot := t.TempDir()
+	stateDir := filepath.Join(projectRoot, ".relay", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll stateDir: %v", err)
+	}
+	liveContractPath := filepath.Join(stateDir, "party-contract.json")
+	if err := os.WriteFile(liveContractPath, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("WriteFile live contract: %v", err)
+	}
+
+	if err := RegisterSession(RegistryEntry{
+		ProjectName:  "stale",
+		ContractPath: filepath.Join(t.TempDir(), "missing", "party-contract.json"),
+		ProjectRoot:  projectRoot,
+	}); err != nil {
+		t.Fatalf("RegisterSession: %v", err)
+	}
+
+	got, err := FindContractPath(FindOptions{
+		ProjectName: "stale",
+		CWD:         projectRoot,
+	})
+	if err != nil {
+		t.Fatalf("FindContractPath: %v", err)
+	}
+	if got != liveContractPath {
+		t.Fatalf("path = %q, want %q", got, liveContractPath)
+	}
+}
+
+func writeRegistryContractFile(t *testing.T, projectRoot string) string {
+	t.Helper()
+	stateDir := filepath.Join(projectRoot, ".relay", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll stateDir: %v", err)
+	}
+	contractPath := filepath.Join(stateDir, "party-contract.json")
+	if err := os.WriteFile(contractPath, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("WriteFile contract: %v", err)
+	}
+	return contractPath
 }
 
 func TestCwdWithinRoot(t *testing.T) {
