@@ -32,28 +32,37 @@ func newContractInitCmd() *cobra.Command {
 }
 
 func newContractShowCmd() *cobra.Command {
-	return &cobra.Command{
+	var contractPath string
+	cmd := &cobra.Command{
 		Use:   "show",
 		Short: "Show a resolved party contract",
 		RunE:  runContractShow,
 	}
+	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON")
+	return cmd
 }
 
 func newContractRegisterCmd() *cobra.Command {
-	return &cobra.Command{
+	var contractPath string
+	cmd := &cobra.Command{
 		Use:   "register",
 		Short: "Register the current contract in the session registry",
 		RunE:  runContractRegister,
 	}
+	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON")
+	return cmd
 }
 
 func newContractDeregisterCmd() *cobra.Command {
-	return &cobra.Command{
+	var contractPath string
+	cmd := &cobra.Command{
 		Use:   "deregister [project-name]",
 		Short: "Remove a project from the session registry",
 		Args:  cobra.MaximumNArgs(1),
 		RunE:  runContractDeregister,
 	}
+	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON")
+	return cmd
 }
 
 func newContractSessionsCmd() *cobra.Command {
@@ -96,11 +105,9 @@ func runContractInit(cmd *cobra.Command, _ []string) error {
 }
 
 func runContractShow(cmd *cobra.Command, _ []string) error {
-	c, err := contract.BuildContract(contract.InitOptions{
-		StateDir: os.Getenv("RELAY_STATE_DIR"),
-		ShareDir: os.Getenv("RELAY_SHARE_DIR"),
-		MainDir:  os.Getenv("RELAY_MAIN_DIR"),
-	})
+	projectName, _ := cmd.Flags().GetString("project")
+	contractPath, _ := cmd.Flags().GetString("contract-path")
+	c, err := loadOrBuildContract(contractPath, projectName)
 	if err != nil {
 		return err
 	}
@@ -118,6 +125,10 @@ func runContractRegister(cmd *cobra.Command, _ []string) error {
 	c, err := loadOrBuildContract(contractPath, projectName)
 	if err != nil {
 		return fmt.Errorf("load contract: %w", err)
+	}
+
+	if _, err := os.Stat(c.Paths.ContractPath); err != nil {
+		return fmt.Errorf("contract file does not exist: %s", c.Paths.ContractPath)
 	}
 
 	entry := contract.RegistryEntry{
