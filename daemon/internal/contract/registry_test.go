@@ -12,11 +12,13 @@ import (
 func TestRegisterAndList(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
+	zetaRoot := t.TempDir()
+	alphaRoot := t.TempDir()
 
 	if err := RegisterSession(RegistryEntry{
 		ProjectName:  "zeta",
-		ContractPath: "/tmp/zeta/party-contract.json",
-		ProjectRoot:  "/tmp/zeta",
+		ContractPath: writeRegistryContractFile(t, zetaRoot),
+		ProjectRoot:  zetaRoot,
 		TmuxSession:  "party-zeta",
 		UpdatedAt:    time.Unix(10, 0).UTC(),
 	}); err != nil {
@@ -24,8 +26,8 @@ func TestRegisterAndList(t *testing.T) {
 	}
 	if err := RegisterSession(RegistryEntry{
 		ProjectName:  "alpha",
-		ContractPath: "/tmp/alpha/party-contract.json",
-		ProjectRoot:  "/tmp/alpha",
+		ContractPath: writeRegistryContractFile(t, alphaRoot),
+		ProjectRoot:  alphaRoot,
 		TmuxSession:  "party-alpha",
 		UpdatedAt:    time.Unix(20, 0).UTC(),
 	}); err != nil {
@@ -48,11 +50,12 @@ func TestRegisterAndList(t *testing.T) {
 func TestDeregisterSession(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
+	projectRoot := t.TempDir()
 
 	if err := RegisterSession(RegistryEntry{
 		ProjectName:  "demo",
-		ContractPath: "/tmp/demo/party-contract.json",
-		ProjectRoot:  "/tmp/demo",
+		ContractPath: writeRegistryContractFile(t, projectRoot),
+		ProjectRoot:  projectRoot,
 	}); err != nil {
 		t.Fatalf("RegisterSession: %v", err)
 	}
@@ -241,9 +244,11 @@ func TestFindWalkUpWithMultipleRegisteredProjects(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
 
+	alphaRoot := t.TempDir()
+	betaRoot := t.TempDir()
 	for _, entry := range []RegistryEntry{
-		{ProjectName: "alpha", ContractPath: "/tmp/alpha/party-contract.json", ProjectRoot: "/tmp/alpha"},
-		{ProjectName: "beta", ContractPath: "/tmp/beta/party-contract.json", ProjectRoot: "/tmp/beta"},
+		{ProjectName: "alpha", ContractPath: writeRegistryContractFile(t, alphaRoot), ProjectRoot: alphaRoot},
+		{ProjectName: "beta", ContractPath: writeRegistryContractFile(t, betaRoot), ProjectRoot: betaRoot},
 	} {
 		if err := RegisterSession(entry); err != nil {
 			t.Fatalf("RegisterSession %s: %v", entry.ProjectName, err)
@@ -304,6 +309,95 @@ func TestFindSkipsStaleRegistryEntry(t *testing.T) {
 	}
 	if got != liveContractPath {
 		t.Fatalf("path = %q, want %q", got, liveContractPath)
+	}
+}
+
+func TestFindAllStaleEntriesFallsBackToWalkUp(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	for _, entry := range []RegistryEntry{
+		{ProjectName: "alpha", ContractPath: filepath.Join(t.TempDir(), "missing-a.json"), ProjectRoot: t.TempDir()},
+		{ProjectName: "beta", ContractPath: filepath.Join(t.TempDir(), "missing-b.json"), ProjectRoot: t.TempDir()},
+	} {
+		if err := RegisterSession(entry); err != nil {
+			t.Fatalf("RegisterSession %s: %v", entry.ProjectName, err)
+		}
+	}
+
+	projectRoot := t.TempDir()
+	cwd := filepath.Join(projectRoot, "cx-wt", "subdir")
+	contractPath := writeRegistryContractFile(t, projectRoot)
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("MkdirAll cwd: %v", err)
+	}
+
+	got, err := FindContractPath(FindOptions{CWD: cwd})
+	if err != nil {
+		t.Fatalf("FindContractPath: %v", err)
+	}
+	if got != contractPath {
+		t.Fatalf("path = %q, want %q", got, contractPath)
+	}
+}
+
+func TestRegistryEntryPathValidation(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	valid := []string{"demo", "demo_1", "Demo-1"}
+	for _, name := range valid {
+		if !validProjectName(name) {
+			t.Fatalf("validProjectName(%q) = false, want true", name)
+		}
+		if _, err := registryEntryPath(name); err != nil {
+			t.Fatalf("registryEntryPath(%q): %v", name, err)
+		}
+	}
+
+	invalid := []string{"", "../escape", "foo/bar", "foo\\bar", "foo..bar", "space name"}
+	for _, name := range invalid {
+		if validProjectName(name) {
+			t.Fatalf("validProjectName(%q) = true, want false", name)
+		}
+		if _, err := registryEntryPath(name); err == nil {
+			t.Fatalf("registryEntryPath(%q) error = nil, want error", name)
+		}
+	}
+}
+
+func TestRegisterSessionPermissions(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	projectRoot := t.TempDir()
+	contractPath := writeRegistryContractFile(t, projectRoot)
+
+	entry := RegistryEntry{
+		ProjectName:  "secure",
+		ContractPath: contractPath,
+		ProjectRoot:  projectRoot,
+	}
+	if err := RegisterSession(entry); err != nil {
+		t.Fatalf("RegisterSession: %v", err)
+	}
+
+	registryPath, err := registryEntryPath(entry.ProjectName)
+	if err != nil {
+		t.Fatalf("registryEntryPath: %v", err)
+	}
+	info, err := os.Stat(registryPath)
+	if err != nil {
+		t.Fatalf("Stat file: %v", err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("file mode = %o, want %o", got, want)
+	}
+
+	dirInfo, err := os.Stat(filepath.Dir(registryPath))
+	if err != nil {
+		t.Fatalf("Stat dir: %v", err)
+	}
+	if got, want := dirInfo.Mode().Perm(), os.FileMode(0o700); got != want {
+		t.Fatalf("dir mode = %o, want %o", got, want)
 	}
 }
 
