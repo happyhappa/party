@@ -1,4 +1,5 @@
 daemon/context-capture
+daemon/partyctl
 daemon/relay
 daemon/relay-daemon
 .beads/last_compact_offset_*

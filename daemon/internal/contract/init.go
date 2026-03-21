@@ -131,7 +131,7 @@ func buildTemplateVars(projectRoot, mainDir, shareDir, stateDir string, override
 	}
 	logDir := filepath.Join(shareDir, "log")
 	inboxDir := filepath.Join(shareDir, "outbox")
-	scriptsDir := filepath.Join(projectRoot, "daemon", "scripts", "statusline")
+	scriptsDir := filepath.Join(mainDir, "daemon", "scripts", "statusline")
 	projectName := filepath.Base(projectRoot)
 	vars := map[string]string{
 		"home":         home,
