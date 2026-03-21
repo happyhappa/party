@@ -833,6 +833,9 @@ func main() {
 					broadcastTargets = append(broadcastTargets, "admin")
 				}
 				for _, target := range broadcastTargets {
+					if target == env.From {
+						continue // skip sender to prevent self-echo
+					}
 					cloned := *env
 					cloned.To = target
 					if err := injector.Inject(&cloned); err != nil {
