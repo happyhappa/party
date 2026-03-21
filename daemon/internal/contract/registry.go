@@ -50,7 +50,11 @@ func RegisterSession(entry RegistryEntry) error {
 	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func DeregisterSession(projectName string) error {
@@ -93,7 +97,7 @@ func FindContractPath(opts FindOptions) (string, error) {
 		return opts.ExplicitPath, nil
 	}
 	if strings.TrimSpace(opts.RelayStateDir) != "" {
-		path := filepath.Join(opts.RelayStateDir, "party-contract.json")
+		path := filepath.Join(opts.RelayStateDir, ContractFilename)
 		if _, err := os.Stat(path); err == nil {
 			return path, nil
 		}
@@ -216,7 +220,7 @@ func findContractByWalkUp(cwd string) (string, bool) {
 		return "", false
 	}
 	for dir := start; ; dir = filepath.Dir(dir) {
-		path := filepath.Join(dir, ".relay", "state", "party-contract.json")
+		path := filepath.Join(dir, ".relay", "state", ContractFilename)
 		if _, err := os.Stat(path); err == nil {
 			return path, true
 		}

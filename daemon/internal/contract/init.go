@@ -57,7 +57,7 @@ func BuildContract(opts InitOptions) (*Contract, error) {
 		c.Paths.InboxDir = filepath.Join(shareDir, "outbox")
 	}
 	if c.Paths.ContractPath == "" {
-		c.Paths.ContractPath = filepath.Join(stateDir, "party-contract.json")
+		c.Paths.ContractPath = filepath.Join(stateDir, ContractFilename)
 	}
 
 	if err := c.ValidateBasic(); err != nil {

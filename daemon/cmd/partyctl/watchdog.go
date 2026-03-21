@@ -434,18 +434,4 @@ func findPromptPath() string {
 	return ""
 }
 
-// readPanesJSON reads panes.json to get pane IDs.
-func readPanesJSON(stateDir string) (map[string]string, error) {
-	data, err := os.ReadFile(filepath.Join(stateDir, "panes.json"))
-	if err != nil {
-		return nil, err
-	}
-	var f struct {
-		Panes map[string]string `json:"panes"`
-	}
-	if err := json.Unmarshal(data, &f); err != nil {
-		return nil, err
-	}
-	return f.Panes, nil
-}
 

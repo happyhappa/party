@@ -9,6 +9,9 @@ import (
 
 const CurrentVersion = 1
 
+// ContractFilename is the standard name for party contract files.
+const ContractFilename = "party-contract.json"
+
 // Duration wraps time.Duration so JSON uses human-readable strings like "5m".
 type Duration struct {
 	time.Duration
