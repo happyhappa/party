@@ -49,7 +49,8 @@ func newStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show aggregated party status",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStatus(cmd, contractPath, format, time.Now())
+			projectName, _ := cmd.Flags().GetString("project")
+			return runStatus(cmd, contractPath, projectName, format, time.Now())
 		},
 	}
 	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON")
@@ -57,8 +58,8 @@ func newStatusCmd() *cobra.Command {
 	return cmd
 }
 
-func runStatus(cmd *cobra.Command, contractPath, format string, now time.Time) error {
-	c, err := loadOrBuildContract(contractPath)
+func runStatus(cmd *cobra.Command, contractPath, projectName, format string, now time.Time) error {
+	c, err := loadOrBuildContract(contractPath, projectName)
 	if err != nil {
 		return fmt.Errorf("load contract: %w", err)
 	}

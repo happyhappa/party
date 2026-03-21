@@ -24,6 +24,7 @@ func newRootCmd() *cobra.Command {
 		Use:   "partyctl",
 		Short: "Party control plane CLI",
 	}
+	cmd.PersistentFlags().String("project", "", "project name for multi-session disambiguation")
 	cmd.AddCommand(newContractCmd())
 	cmd.AddCommand(newValidateCmd())
 	cmd.AddCommand(newConfigureCmd())

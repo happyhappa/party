@@ -25,7 +25,8 @@ func newHealthCmd() *cobra.Command {
 Compares against contract RecycleSpec thresholds. If a role exceeds its threshold
 and its recycle state is 'ready', transitions the state to 'exiting'.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runHealth(cmd, contractPath, format, roles)
+			projectName, _ := cmd.Flags().GetString("project")
+			return runHealth(cmd, contractPath, projectName, format, roles)
 		},
 	}
 	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON")
@@ -50,8 +51,8 @@ type roleHealth struct {
 	Error             string `json:"error,omitempty"`
 }
 
-func runHealth(cmd *cobra.Command, contractPath, format string, filterRoles []string) error {
-	c, err := loadOrBuildContract(contractPath)
+func runHealth(cmd *cobra.Command, contractPath, projectName, format string, filterRoles []string) error {
+	c, err := loadOrBuildContract(contractPath, projectName)
 	if err != nil {
 		return fmt.Errorf("load contract: %w", err)
 	}

@@ -33,7 +33,8 @@ func newBriefCmd() *cobra.Command {
 		Short: "Generate a session brief for a role",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBrief(cmd, contractPath, args[0], final, format, time.Now().UTC())
+			projectName, _ := cmd.Flags().GetString("project")
+			return runBrief(cmd, contractPath, projectName, args[0], final, format, time.Now().UTC())
 		},
 	}
 	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON")
@@ -42,8 +43,8 @@ func newBriefCmd() *cobra.Command {
 	return cmd
 }
 
-func runBrief(cmd *cobra.Command, contractPath, role string, final bool, format string, now time.Time) error {
-	c, roleSpec, toolSpec, err := loadContractRoleAndTool(contractPath, role)
+func runBrief(cmd *cobra.Command, contractPath, projectName, role string, final bool, format string, now time.Time) error {
+	c, roleSpec, toolSpec, err := loadContractRoleAndTool(contractPath, projectName, role)
 	if err != nil {
 		return err
 	}

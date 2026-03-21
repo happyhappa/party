@@ -17,7 +17,8 @@ func newStopCmd() *cobra.Command {
 		Short: "Stop an agent gracefully or forcefully",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStop(cmd, contractPath, args[0], force, time.Now().UTC())
+			projectName, _ := cmd.Flags().GetString("project")
+			return runStop(cmd, contractPath, projectName, args[0], force, time.Now().UTC())
 		},
 	}
 	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON")
@@ -25,8 +26,8 @@ func newStopCmd() *cobra.Command {
 	return cmd
 }
 
-func runStop(cmd *cobra.Command, contractPath, role string, force bool, now time.Time) error {
-	c, roleSpec, toolSpec, err := loadContractRoleAndTool(contractPath, role)
+func runStop(cmd *cobra.Command, contractPath, projectName, role string, force bool, now time.Time) error {
+	c, roleSpec, toolSpec, err := loadContractRoleAndTool(contractPath, projectName, role)
 	if err != nil {
 		return err
 	}

@@ -32,7 +32,8 @@ func newConfigureApplyCmd() *cobra.Command {
 		Short: "Apply managed tool configuration",
 		Long:  "Applies config mutations declared in the contract to tool config files.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runConfigureApply(cmd, contractPath, dryRun, format)
+			projectName, _ := cmd.Flags().GetString("project")
+			return runConfigureApply(cmd, contractPath, projectName, dryRun, format)
 		},
 	}
 	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON")
@@ -52,8 +53,8 @@ type fileResult struct {
 	Warning   string                       `json:"warning,omitempty"`
 }
 
-func runConfigureApply(cmd *cobra.Command, contractPath string, dryRun bool, format string) error {
-	c, err := loadOrBuildContract(contractPath)
+func runConfigureApply(cmd *cobra.Command, contractPath, projectName string, dryRun bool, format string) error {
+	c, err := loadOrBuildContract(contractPath, projectName)
 	if err != nil {
 		return fmt.Errorf("load contract: %w", err)
 	}

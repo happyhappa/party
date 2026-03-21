@@ -12,6 +12,7 @@ import (
 )
 
 func TestContractInitWritesFile(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // isolate registry
 	dir := t.TempDir()
 	// Create daemon/ and bin/ so resolveProjectRoot finds it
 	os.MkdirAll(filepath.Join(dir, "daemon"), 0o755)

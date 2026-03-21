@@ -36,7 +36,8 @@ Produces the v2 pane map format expected by relay-daemon.
 Examples:
   partyctl panes write --set-pane oc=%0 --set-pane cc=%1 --set-pane cx=%2`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPanesWrite(cmd, contractPath, setPanes)
+			projectName, _ := cmd.Flags().GetString("project")
+			return runPanesWrite(cmd, contractPath, projectName, setPanes)
 		},
 	}
 	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON")
@@ -51,8 +52,8 @@ type paneMapV2 struct {
 	RegisteredAt string            `json:"registered_at"`
 }
 
-func runPanesWrite(cmd *cobra.Command, contractPath string, setPanes []string) error {
-	c, err := loadOrBuildContract(contractPath)
+func runPanesWrite(cmd *cobra.Command, contractPath, projectName string, setPanes []string) error {
+	c, err := loadOrBuildContract(contractPath, projectName)
 	if err != nil {
 		return fmt.Errorf("load contract: %w", err)
 	}

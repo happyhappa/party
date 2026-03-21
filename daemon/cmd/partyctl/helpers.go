@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/norm/relay-daemon/internal/contract"
 )
@@ -17,31 +16,28 @@ func (e *exitError) Error() string {
 	return fmt.Sprintf("exit %d", e.code)
 }
 
-// loadOrBuildContract loads an existing contract from disk or builds one
-// from the environment if no contract file exists.
-//
-// If contractPath is explicitly provided (via flag), the file MUST exist.
-// If discovered from RELAY_STATE_DIR, we try the file and fall back to build.
-// If no path is available at all, build from environment.
-func loadOrBuildContract(contractPath string) (*contract.Contract, error) {
-	explicit := contractPath != ""
-
-	if contractPath == "" {
-		stateDir := os.Getenv("RELAY_STATE_DIR")
-		if stateDir != "" {
-			contractPath = filepath.Join(stateDir, "party-contract.json")
-		}
+// loadOrBuildContract resolves a contract using the discovery chain:
+//  1. --contract-path flag (explicit, must exist)
+//  2. RELAY_STATE_DIR env → $RELAY_STATE_DIR/party-contract.json
+//  3. Session registry (cwd match / --project / single-session auto-select)
+//  4. Walk up from cwd for .relay/state/party-contract.json
+//  5. BuildContract from env (last resort)
+func loadOrBuildContract(contractPath, projectName string) (*contract.Contract, error) {
+	cwd, _ := os.Getwd()
+	found, err := contract.FindContractPath(contract.FindOptions{
+		ExplicitPath:  contractPath,
+		RelayStateDir: os.Getenv("RELAY_STATE_DIR"),
+		ProjectName:   projectName,
+		CWD:           cwd,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if found != "" {
+		return contract.LoadContract(found)
 	}
 
-	if contractPath != "" {
-		if _, err := os.Stat(contractPath); err == nil {
-			return contract.LoadContract(contractPath)
-		} else if explicit {
-			return nil, fmt.Errorf("contract file not found: %s", contractPath)
-		}
-		// Discovered path missing — fall through to build
-	}
-
+	// Final fallback: build from env
 	return contract.BuildContract(contract.InitOptions{
 		StateDir: os.Getenv("RELAY_STATE_DIR"),
 		ShareDir: os.Getenv("RELAY_SHARE_DIR"),

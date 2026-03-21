@@ -19,7 +19,8 @@ func newStartCmd() *cobra.Command {
 		Short: "Launch an agent in its tmux pane",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStart(cmd, contractPath, args[0], hydrate, setPanes, time.Now().UTC())
+			projectName, _ := cmd.Flags().GetString("project")
+			return runStart(cmd, contractPath, projectName, args[0], hydrate, setPanes, time.Now().UTC())
 		},
 	}
 	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON")
@@ -28,8 +29,8 @@ func newStartCmd() *cobra.Command {
 	return cmd
 }
 
-func runStart(cmd *cobra.Command, contractPath, role string, hydrate bool, setPanes []string, now time.Time) error {
-	c, roleSpec, toolSpec, err := loadContractRoleAndToolWithPanes(contractPath, role, setPanes)
+func runStart(cmd *cobra.Command, contractPath, projectName, role string, hydrate bool, setPanes []string, now time.Time) error {
+	c, roleSpec, toolSpec, err := loadContractRoleAndToolWithPanes(contractPath, projectName, role, setPanes)
 	if err != nil {
 		return err
 	}
@@ -92,8 +93,8 @@ func runStart(cmd *cobra.Command, contractPath, role string, hydrate bool, setPa
 	return nil
 }
 
-func loadContractRoleAndToolWithPanes(contractPath, role string, setPanes []string) (*contract.Contract, contract.RoleSpec, contract.AgentToolSpec, error) {
-	c, err := loadOrBuildContract(contractPath)
+func loadContractRoleAndToolWithPanes(contractPath, projectName, role string, setPanes []string) (*contract.Contract, contract.RoleSpec, contract.AgentToolSpec, error) {
+	c, err := loadOrBuildContract(contractPath, projectName)
 	if err != nil {
 		return nil, contract.RoleSpec{}, contract.AgentToolSpec{}, fmt.Errorf("load contract: %w", err)
 	}

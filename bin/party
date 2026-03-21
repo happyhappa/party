@@ -164,10 +164,17 @@ else
     fi
 fi
 
-# --- Validate contract (partyctl) ---
+# --- Initialize contract and register session (partyctl) ---
 if [[ -n "$PARTYCTL_BIN" ]]; then
+    log "Initializing contract..."
+    if (cd "$RELAY_MAIN_DIR" && "$PARTYCTL_BIN" contract init); then
+        log "Contract initialized and session registered"
+    else
+        err "Contract init failed — commands will fall back to env-based discovery"
+    fi
+
     log "Validating contract..."
-    if ! (cd "$RELAY_MAIN_DIR" && "$PARTYCTL_BIN" validate --format human); then
+    if ! (cd "$RELAY_MAIN_DIR" && "$PARTYCTL_BIN" validate --contract-path "$RELAY_STATE_DIR/party-contract.json" --format human); then
         err "Contract validation failed — check warnings above"
         # Non-fatal: validation failures (missing dirs, etc.) may resolve after tmux setup
     fi

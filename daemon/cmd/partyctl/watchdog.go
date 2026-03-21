@@ -30,7 +30,8 @@ func newWatchdogCmd() *cobra.Command {
 and continuous-brief-loop.sh. Runs health checks, triggers recycles when
 context thresholds are exceeded, and generates continuous briefs.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := loadOrBuildContract(contractPath)
+			projectName, _ := cmd.Flags().GetString("project")
+			c, err := loadOrBuildContract(contractPath, projectName)
 			if err != nil {
 				return fmt.Errorf("load contract: %w", err)
 			}

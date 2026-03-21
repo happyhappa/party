@@ -40,7 +40,8 @@ func newRestartCmd() *cobra.Command {
 		Short: "Recycle a role: exit, relaunch, and hydrate",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runRestart(cmd, contractPath, args[0], force, time.Now().UTC())
+			projectName, _ := cmd.Flags().GetString("project")
+			return runRestart(cmd, contractPath, projectName, args[0], force, time.Now().UTC())
 		},
 	}
 	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON")
@@ -48,8 +49,8 @@ func newRestartCmd() *cobra.Command {
 	return cmd
 }
 
-func runRestart(cmd *cobra.Command, contractPath, role string, force bool, now time.Time) error {
-	c, roleSpec, toolSpec, err := loadContractRoleAndTool(contractPath, role)
+func runRestart(cmd *cobra.Command, contractPath, projectName, role string, force bool, now time.Time) error {
+	c, roleSpec, toolSpec, err := loadContractRoleAndTool(contractPath, projectName, role)
 	if err != nil {
 		return err
 	}
@@ -196,8 +197,8 @@ func runRestart(cmd *cobra.Command, contractPath, role string, force bool, now t
 	return nil
 }
 
-func loadContractRoleAndTool(contractPath, role string) (*contract.Contract, contract.RoleSpec, contract.AgentToolSpec, error) {
-	c, err := loadOrBuildContract(contractPath)
+func loadContractRoleAndTool(contractPath, projectName, role string) (*contract.Contract, contract.RoleSpec, contract.AgentToolSpec, error) {
+	c, err := loadOrBuildContract(contractPath, projectName)
 	if err != nil {
 		return nil, contract.RoleSpec{}, contract.AgentToolSpec{}, fmt.Errorf("load contract: %w", err)
 	}

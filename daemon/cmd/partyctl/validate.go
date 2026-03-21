@@ -17,7 +17,8 @@ func newValidateCmd() *cobra.Command {
 		Short: "Validate a party contract and environment",
 		Long:  "Loads a contract and validates binaries, paths, configs, and internal consistency.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runValidate(cmd, contractPath, format)
+			projectName, _ := cmd.Flags().GetString("project")
+			return runValidate(cmd, contractPath, projectName, format)
 		},
 	}
 	cmd.Flags().StringVar(&contractPath, "contract-path", "", "path to contract JSON (default: $RELAY_STATE_DIR/party-contract.json)")
@@ -25,8 +26,8 @@ func newValidateCmd() *cobra.Command {
 	return cmd
 }
 
-func runValidate(cmd *cobra.Command, contractPath, format string) error {
-	c, err := loadOrBuildContract(contractPath)
+func runValidate(cmd *cobra.Command, contractPath, projectName, format string) error {
+	c, err := loadOrBuildContract(contractPath, projectName)
 	if err != nil {
 		if format == "json" {
 			data, _ := json.MarshalIndent(map[string]any{
