@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/norm/relay-daemon/internal/contract"
 	"github.com/norm/relay-daemon/internal/recycle"
 	"github.com/spf13/cobra"
 )
@@ -93,22 +92,3 @@ func runStart(cmd *cobra.Command, contractPath, projectName, role string, hydrat
 	return nil
 }
 
-func loadContractRoleAndToolWithPanes(contractPath, projectName, role string, setPanes []string) (*contract.Contract, contract.RoleSpec, contract.AgentToolSpec, error) {
-	c, err := loadOrBuildContract(contractPath, projectName)
-	if err != nil {
-		return nil, contract.RoleSpec{}, contract.AgentToolSpec{}, fmt.Errorf("load contract: %w", err)
-	}
-	if err := applyPaneOverrides(c, setPanes); err != nil {
-		return nil, contract.RoleSpec{}, contract.AgentToolSpec{}, err
-	}
-	for _, roleSpec := range c.Roles {
-		if roleSpec.Name == role {
-			toolSpec, ok := c.Tools[roleSpec.Tool]
-			if !ok {
-				return nil, contract.RoleSpec{}, contract.AgentToolSpec{}, fmt.Errorf("role %q references unknown tool %q", role, roleSpec.Tool)
-			}
-			return c, roleSpec, toolSpec, nil
-		}
-	}
-	return nil, contract.RoleSpec{}, contract.AgentToolSpec{}, fmt.Errorf("unknown role %q", role)
-}

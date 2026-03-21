@@ -197,23 +197,6 @@ func runRestart(cmd *cobra.Command, contractPath, projectName, role string, forc
 	return nil
 }
 
-func loadContractRoleAndTool(contractPath, projectName, role string) (*contract.Contract, contract.RoleSpec, contract.AgentToolSpec, error) {
-	c, err := loadOrBuildContract(contractPath, projectName)
-	if err != nil {
-		return nil, contract.RoleSpec{}, contract.AgentToolSpec{}, fmt.Errorf("load contract: %w", err)
-	}
-	for _, roleSpec := range c.Roles {
-		if roleSpec.Name == role {
-			toolSpec, ok := c.Tools[roleSpec.Tool]
-			if !ok {
-				return nil, contract.RoleSpec{}, contract.AgentToolSpec{}, fmt.Errorf("role %q references unknown tool %q", role, roleSpec.Tool)
-			}
-			return c, roleSpec, toolSpec, nil
-		}
-	}
-	return nil, contract.RoleSpec{}, contract.AgentToolSpec{}, fmt.Errorf("unknown role %q", role)
-}
-
 func lookupPaneID(c *contract.Contract, role string) (string, error) {
 	for _, roleSpec := range c.Roles {
 		if roleSpec.Name == role && roleSpec.PaneID != "" {
