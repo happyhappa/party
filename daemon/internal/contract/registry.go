@@ -29,9 +29,6 @@ type FindOptions struct {
 }
 
 func RegisterSession(entry RegistryEntry) error {
-	if strings.TrimSpace(entry.ProjectName) == "" {
-		return fmt.Errorf("project name is required")
-	}
 	path, err := registryEntryPath(entry.ProjectName)
 	if err != nil {
 		return err
@@ -43,11 +40,11 @@ func RegisterSession(entry RegistryEntry) error {
 	if err != nil {
 		return fmt.Errorf("marshal registry entry: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
@@ -153,6 +150,11 @@ func FindContractPath(opts FindOptions) (string, error) {
 			return validEntries[0].ContractPath, nil
 		}
 		if len(validEntries) == 0 {
+			if strings.TrimSpace(opts.CWD) != "" {
+				if path, ok := findContractByWalkUp(opts.CWD); ok {
+					return path, nil
+				}
+			}
 			return "", nil
 		}
 		names := make([]string, 0, len(validEntries))
@@ -195,8 +197,8 @@ func registryDir() (string, error) {
 }
 
 func registryEntryPath(projectName string) (string, error) {
-	if strings.TrimSpace(projectName) == "" {
-		return "", fmt.Errorf("project name is required")
+	if !validProjectName(projectName) {
+		return "", fmt.Errorf("invalid project name %q", projectName)
 	}
 	dir, err := registryDir()
 	if err != nil {
@@ -264,4 +266,17 @@ func contractPathExists(path string) bool {
 		return true
 	}
 	return false
+}
+
+func validProjectName(name string) bool {
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
