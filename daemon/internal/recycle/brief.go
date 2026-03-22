@@ -31,6 +31,7 @@ type BriefOptions struct {
 	Source         string // "continuous" or "final"
 	MaxRawInput    int64  // hard cap on raw bytes (default 100KB)
 	BeadsDir       string // where to store bead files
+	WorkDir        string // working directory for generator commands (must be a git repo)
 }
 
 // BriefResult holds the output of a brief generation.
@@ -108,7 +109,7 @@ func GenerateBrief(opts BriefOptions) (*BriefResult, error) {
 	}
 
 	// Generate brief
-	briefContent, err := runGenerator(opts.Generator, string(prompt), string(filtered))
+	briefContent, err := runGenerator(opts.Generator, opts.WorkDir, string(prompt), string(filtered))
 	if err != nil {
 		return nil, fmt.Errorf("generate brief: %w", err)
 	}
@@ -155,43 +156,57 @@ func runFilter(filterPath string, raw []byte) ([]byte, error) {
 }
 
 // runGenerator calls the selected brief generator.
-func runGenerator(generator, prompt, filteredTranscript string) (string, error) {
+func runGenerator(generator, workDir, prompt, filteredTranscript string) (string, error) {
 	fullPrompt := prompt + "\n\n" + filteredTranscript
 
 	switch generator {
 	case "", "codex":
-		return runCodexExec(fullPrompt)
+		return runCodexExec(workDir, fullPrompt)
 	case "claude":
-		return runClaudePrint(fullPrompt)
+		return runClaudePrint(workDir, fullPrompt)
 	default:
 		return "", fmt.Errorf("unknown generator %q (want codex or claude)", generator)
 	}
 }
 
 // runCodexExec generates a brief using codex exec.
-func runCodexExec(prompt string) (string, error) {
+func runCodexExec(workDir, prompt string) (string, error) {
 	codexPath, err := exec.LookPath("codex")
 	if err != nil {
 		return "", fmt.Errorf("codex not found: %w", err)
 	}
 	cmd := exec.Command(codexPath, "exec", prompt)
+	if workDir != "" {
+		cmd.Dir = workDir
+	}
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("codex exec: %w", err)
+		stderr := ""
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			stderr = ": " + string(ee.Stderr)
+		}
+		return "", fmt.Errorf("codex exec: %w%s", err, stderr)
 	}
 	return string(out), nil
 }
 
 // runClaudePrint generates a brief using claude --print.
-func runClaudePrint(prompt string) (string, error) {
+func runClaudePrint(workDir, prompt string) (string, error) {
 	claudePath, err := exec.LookPath("claude")
 	if err != nil {
 		return "", fmt.Errorf("claude not found: %w", err)
 	}
 	cmd := exec.Command(claudePath, "--print", "-p", prompt)
+	if workDir != "" {
+		cmd.Dir = workDir
+	}
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("claude --print: %w", err)
+		stderr := ""
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			stderr = ": " + string(ee.Stderr)
+		}
+		return "", fmt.Errorf("claude --print: %w%s", err, stderr)
 	}
 	return string(out), nil
 }

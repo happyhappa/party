@@ -80,6 +80,7 @@ func runBrief(cmd *cobra.Command, contractPath, projectName, role string, final 
 		Source:         "continuous",
 		MaxRawInput:    recycle.DefaultMaxRawInput,
 		BeadsDir:       c.Paths.BeadsDir,
+		WorkDir:        c.Project.MainDir,
 	}
 	if toolSpec.Recycle.BriefMinDelta > 0 && !final {
 		delta := opts.EndOffset - opts.StartOffset

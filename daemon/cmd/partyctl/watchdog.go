@@ -370,6 +370,7 @@ func maybeGenerateBrief(cmd *cobra.Command, cfg watchdogConfig, role string, sta
 		Generator:      "codex",
 		Source:         "continuous",
 		BeadsDir:       os.Getenv("BEADS_DIR"),
+		WorkDir:        cfg.contract.Project.MainDir,
 	}
 
 	result, err := recycle.GenerateBrief(opts)
