@@ -36,5 +36,6 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newWatchdogCmd())
 	cmd.AddCommand(newStartCmd())
 	cmd.AddCommand(newStopCmd())
+	cmd.AddCommand(newHydrateCmd())
 	return cmd
 }

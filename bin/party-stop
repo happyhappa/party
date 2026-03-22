@@ -278,8 +278,12 @@ for f in panes.json admin-watchdog.pid relay-daemon.pid admin-watchdog.heartbeat
         (( CLEANED++ )) || true
     fi
 done
+# Clean recycle state files (stale 'exiting' state blocks watchdog after restart)
+for f in "$STATE_DIR"/recycle-*.json; do
+    [[ -f "$f" ]] && rm -f "$f" && (( CLEANED++ )) || true
+done
 # Clean lock files
-for f in "$STATE_DIR"/pre-compact-*.lock; do
+for f in "$STATE_DIR"/pre-compact-*.lock "$STATE_DIR"/recycle-*.lock; do
     [[ -f "$f" ]] && rm -f "$f" && (( CLEANED++ )) || true
 done
 log "  Removed $CLEANED state files"

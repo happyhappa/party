@@ -395,6 +395,18 @@ else
         "$OC_PANE" "$CC_PANE" "$CX_PANE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PANE_MAP"
 fi
 
+# --- Hydrate agents with latest context ---
+if [[ -n "$PARTYCTL_BIN" ]]; then
+    log "Hydrating agents with latest briefs/context..."
+    for role in oc cc cx; do
+        if (cd "$RELAY_MAIN_DIR" && "$PARTYCTL_BIN" hydrate "$role" 2>/dev/null); then
+            log "  $role: hydrated"
+        else
+            log "  $role: no hydration data (first run or no prior session)"
+        fi
+    done
+fi
+
 # Force-kill stale processes before starting new ones (two-phase)
 RELAY_PID_FILE="$RELAY_STATE_DIR/relay-daemon.pid"
 ADMIN_PID_FILE="$RELAY_STATE_DIR/admin-watchdog.pid"

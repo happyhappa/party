@@ -180,7 +180,7 @@ update_state "relaunching"
 # Launch final brief in background if partyctl is available
 if [[ -n "$PARTYCTL" ]]; then
     (
-        "$PARTYCTL" brief "$ROLE" --source final 2>&1 | while read -r line; do
+        "$PARTYCTL" brief "$ROLE" --final 2>&1 | while read -r line; do
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [recycle:$ROLE:final-brief] $line" >> "$LOG_FILE" 2>/dev/null
         done
     ) &
